@@ -271,12 +271,15 @@ The `Config` struct maps to YAML/JSON and Environment Variables.
 | `file.compress` | - | `true` | Gzip rotated files. |
 | **OTEL** | | | |
 | `otel.enabled` | - | `false` | Enable OpenTelemetry export. |
-| `otel.endpoint` | - | `""` | Collector address (e.g., `localhost:4317`). |
+| `otel.endpoint` | `OTEL_ENDPOINT` | `""` | Collector address (e.g., `localhost:4317`). |
 | `otel.protocol` | - | `grpc` | `grpc` or `http`. |
 | `otel.insecure` | - | `false` | Disable TLS (use for local collectors). |
+| `otel.username` | `OTEL_USERNAME` | `""` | Basic Auth username (optional). |
+| `otel.password` | `OTEL_PASSWORD` | `""` | Basic Auth password (optional). |
 | `otel.timeout` | - | `10s` | Export timeout. |
 | `otel.batch_size` | - | `512` | Max logs per batch. |
 | `otel.export_interval`| - | `5s` | Flush interval. |
+
 
 ## Architecture
 
