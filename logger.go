@@ -18,7 +18,7 @@
 //
 // With blockchain fields:
 //
-//	import "MRE/pkg/ion/fields"
+//	import "github.com/JupiterMetaLabs/ion/fields"
 //
 //	logger.Info("transaction routed",
 //	    fields.TxHash("abc123"),
@@ -69,6 +69,10 @@ type Logger interface {
 	// Applications should call Sync before exiting.
 	Sync() error
 
+	// Shutdown gracefully shuts down the logger, flushing any buffered logs
+	// and closing background resources (like OTEL exporters).
+	Shutdown(ctx context.Context) error
+
 	// SetLevel changes the log level at runtime.
 	// Valid levels: debug, info, warn, error, fatal.
 	SetLevel(level string)
@@ -77,48 +81,84 @@ type Logger interface {
 	GetLevel() string
 }
 
+// FieldType roughly mirrors zapcore.FieldType
+type FieldType uint8
+
+const (
+	UnknownType FieldType = iota
+	StringType
+	Int64Type
+	Float64Type
+	BoolType
+	ErrorType
+	AnyType
+)
+
 // Field represents a structured logging field (key-value pair).
+// It is designed to be zero-allocation for common types.
 type Field struct {
-	Key   string
-	Value any
+	Key       string
+	Type      FieldType
+	Integer   int64
+	StringVal string
+	Float     float64
+	Interface any
 }
 
 // F is a convenience constructor for Field.
-//
-//	logger.Info("connected", ion.F("host", "localhost"), ion.F("port", 8080))
+// It detects the type and creates the appropriate Field.
 func F(key string, value any) Field {
-	return Field{Key: key, Value: value}
+	switch v := value.(type) {
+	case string:
+		return String(key, v)
+	case int:
+		return Int(key, v)
+	case int64:
+		return Int64(key, v)
+	case float64:
+		return Float64(key, v)
+	case bool:
+		return Bool(key, v)
+	case error:
+		return Err(v)
+	default:
+		return Field{Key: key, Type: AnyType, Interface: value}
+	}
 }
 
 // String creates a string field.
 func String(key, value string) Field {
-	return Field{Key: key, Value: value}
+	return Field{Key: key, Type: StringType, StringVal: value}
 }
 
 // Int creates an integer field.
 func Int(key string, value int) Field {
-	return Field{Key: key, Value: value}
+	return Field{Key: key, Type: Int64Type, Integer: int64(value)}
 }
 
 // Int64 creates an int64 field.
 func Int64(key string, value int64) Field {
-	return Field{Key: key, Value: value}
+	return Field{Key: key, Type: Int64Type, Integer: value}
 }
 
 // Float64 creates a float64 field.
 func Float64(key string, value float64) Field {
-	return Field{Key: key, Value: value}
+	return Field{Key: key, Type: Float64Type, Float: value}
 }
 
 // Bool creates a boolean field.
 func Bool(key string, value bool) Field {
-	return Field{Key: key, Value: value}
+	var i int64
+	if value {
+		i = 1
+	}
+	return Field{Key: key, Type: BoolType, Integer: i}
 }
 
 // Err creates an error field with the standard key "error".
 func Err(err error) Field {
 	if err == nil {
-		return Field{Key: "error", Value: nil}
+		return Field{Key: "error", Type: AnyType, Interface: nil}
 	}
-	return Field{Key: "error", Value: err.Error()}
+	return Field{Key: "error", Type: ErrorType, Interface: err}
 }

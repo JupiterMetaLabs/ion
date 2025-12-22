@@ -5,7 +5,7 @@
 //
 // Usage:
 //
-//	import "MRE/pkg/ion/fields"
+//	import "github.com/JupiterMetaLabs/ion/fields"
 //
 //	logger.Info("transaction routed",
 //	    fields.TxHash("abc123"),
@@ -14,7 +14,7 @@
 //	)
 package fields
 
-import "MRE/pkg/ion"
+import "github.com/JupiterMetaLabs/ion"
 
 // --- Transaction Fields ---
 
@@ -42,7 +42,7 @@ func TxType(txType string) ion.Field {
 
 // BlockHeight creates a block height field.
 func BlockHeight(height uint64) ion.Field {
-	return ion.Field{Key: "block_height", Value: height}
+	return ion.Int64("block_height", int64(height))
 }
 
 // BlockHash creates a block hash field.
@@ -52,12 +52,12 @@ func BlockHash(hash string) ion.Field {
 
 // Slot creates a slot number field (Solana).
 func Slot(slot uint64) ion.Field {
-	return ion.Field{Key: "slot", Value: slot}
+	return ion.Int64("slot", int64(slot))
 }
 
 // Epoch creates an epoch field.
 func Epoch(epoch uint64) ion.Field {
-	return ion.Field{Key: "epoch", Value: epoch}
+	return ion.Int64("epoch", int64(epoch))
 }
 
 // --- Chain Context Fields ---
@@ -160,7 +160,7 @@ func RemoteAddr(addr string) ion.Field {
 	return ion.String("remote_addr", addr)
 }
 
-// --- Weight/Score Fields (MRE-specific) ---
+// --- Weight/Score Fields ---
 
 // Weight creates a weight field.
 func Weight(w float64) ion.Field {

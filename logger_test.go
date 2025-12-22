@@ -189,24 +189,38 @@ func TestField_Helpers(t *testing.T) {
 	tests := []struct {
 		name     string
 		field    Field
-		wantKey  string
-		wantType string
+		expected any
 	}{
-		{"F", F("key", "value"), "key", "string"},
-		{"String", String("str", "val"), "str", "string"},
-		{"Int", Int("num", 42), "num", "int"},
-		{"Int64", Int64("big", 123456789), "big", "int64"},
-		{"Float64", Float64("flt", 3.14), "flt", "float64"},
-		{"Bool", Bool("flag", true), "flag", "bool"},
+		{"String", F("key", "val"), "val"},
+		{"Int", F("key", 123), int64(123)},
+		{"Int64", F("key", int64(123)), int64(123)},
+		{"Float64", F("key", 12.34), 12.34},
+		{"Bool", F("key", true), int64(1)},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.field.Key != tt.wantKey {
-				t.Errorf("expected key '%s', got '%s'", tt.wantKey, tt.field.Key)
-			}
-			if tt.field.Value == nil {
-				t.Error("expected non-nil value")
+			switch tt.field.Type {
+			case StringType:
+				if tt.field.StringVal != tt.expected {
+					t.Errorf("expected %v, got %v", tt.expected, tt.field.StringVal)
+				}
+			case Int64Type:
+				if tt.field.Integer != tt.expected {
+					t.Errorf("expected %v, got %v", tt.expected, tt.field.Integer)
+				}
+			case Float64Type:
+				if tt.field.Float != tt.expected {
+					t.Errorf("expected %v, got %v", tt.expected, tt.field.Float)
+				}
+			case BoolType:
+				if tt.field.Integer != tt.expected {
+					t.Errorf("expected %v, got %v", tt.expected, tt.field.Integer)
+				}
+			default:
+				if tt.field.Interface != tt.expected {
+					t.Errorf("expected %v, got %v", tt.expected, tt.field.Interface)
+				}
 			}
 		})
 	}
@@ -256,3 +270,30 @@ func TestParseLevel(t *testing.T) {
 
 // Silence the test output
 var _ = bytes.Buffer{}
+
+func ExampleLogger() {
+	// 1. Initialize the logger
+	logger := New(Development())
+	defer logger.Sync()
+
+	// 2. Log a simple message
+	logger.Info("Hello, World!")
+
+	// 3. Log with structured fields
+	logger.Info("User logged in",
+		F("user_id", 42),
+		F("ip", "192.168.1.1"),
+	)
+}
+
+func ExampleLogger_WithContext() {
+	// Initialize logger
+	logger := New(Default())
+	defer logger.Sync()
+
+	// Create a context (in a real app, this comes from the request)
+	ctx := context.Background()
+
+	// Log with context to automatically attach trace IDs
+	logger.WithContext(ctx).Info("Processing request")
+}

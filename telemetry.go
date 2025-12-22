@@ -18,7 +18,7 @@ import (
 // Usage:
 //
 //	NewTelemetryLog(logger).
-//	    Instrument("mre.routing").
+//	    Instrument("example.routing").
 //	    Component("pool").
 //	    Trace("ROUTE_TX").
 //	    Info("transaction routed", fields.TxHash("abc123"))
@@ -28,7 +28,7 @@ import (
 type TelemetryLog struct {
 	logger     Logger
 	ctx        context.Context
-	instrument string // OTEL scope name (e.g., "mre.routing")
+	instrument string // OTEL scope name (e.g., "example.routing")
 	component  string // Component name (e.g., "pool")
 	module     string // Module name (e.g., "grpc")
 	traceName  string // Span name (e.g., "ROUTE_TX")
@@ -61,7 +61,7 @@ func (t *TelemetryLog) WithContext(ctx context.Context) *TelemetryLog {
 }
 
 // Instrument sets the OTEL instrumentation scope name.
-// Example: "mre.routing", "gossipnode.consensus"
+// Example: "my-service.routing", "consensus.engine"
 func (t *TelemetryLog) Instrument(name string) *TelemetryLog {
 	t.instrument = name
 	t.tracer = otel.Tracer(name)

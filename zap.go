@@ -4,7 +4,9 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 
+	"github.com/JupiterMetaLabs/ion/internal/otel"
 	"go.opentelemetry.io/contrib/bridges/otelzap"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -12,40 +14,54 @@ import (
 
 // zapLogger implements Logger using Uber's Zap.
 type zapLogger struct {
-	zap       *zap.Logger
-	config    Config
-	atomicLvl zap.AtomicLevel
+	zap          *zap.Logger
+	config       Config
+	atomicLvl    zap.AtomicLevel
+	otelProvider *otel.Provider
 }
 
 // New creates a new Logger from the provided configuration.
 // This is the main constructor for ion.
 func New(cfg Config) Logger {
-	return buildLogger(cfg, nil)
+	return buildLogger(cfg, nil, nil)
 }
 
 // NewWithOTEL creates a logger with OTEL export enabled.
 // This wires Zap logs to the OpenTelemetry log pipeline.
 func NewWithOTEL(cfg Config) (Logger, error) {
+	// Map config to internal OTEL config
+	otelCfg := otel.Config{
+		Enabled:        cfg.OTEL.Enabled,
+		Endpoint:       cfg.OTEL.Endpoint,
+		Protocol:       cfg.OTEL.Protocol,
+		Insecure:       cfg.OTEL.Insecure,
+		Timeout:        cfg.OTEL.Timeout,
+		Headers:        cfg.OTEL.Headers,
+		Attributes:     cfg.OTEL.Attributes,
+		BatchSize:      cfg.OTEL.BatchSize,
+		ExportInterval: cfg.OTEL.ExportInterval,
+	}
+
 	// First set up OTEL provider
-	provider, err := SetupOTEL(cfg.OTEL, cfg.ServiceName, cfg.Version)
+	provider, err := otel.Setup(otelCfg, cfg.ServiceName, cfg.Version)
 	if err != nil {
 		return nil, err
 	}
 
 	var otelCore zapcore.Core
-	if provider != nil && provider.provider != nil {
+	if provider != nil && provider.LoggerProvider() != nil {
 		otelCore = otelzap.NewCore(
 			cfg.ServiceName,
-			otelzap.WithLoggerProvider(provider.provider),
+			otelzap.WithLoggerProvider(provider.LoggerProvider()),
 		)
 	}
 
-	return buildLogger(cfg, otelCore), nil
+	return buildLogger(cfg, otelCore, provider), nil
 }
 
 // buildLogger constructs the zapLogger with all configured cores.
 // If otelCore is non-nil, it's added to the core tee.
-func buildLogger(cfg Config, otelCore zapcore.Core) Logger {
+func buildLogger(cfg Config, otelCore zapcore.Core, otelProvider *otel.Provider) Logger {
 	atomicLevel := zap.NewAtomicLevelAt(parseLevel(cfg.Level))
 	cores := make([]zapcore.Core, 0, 4)
 
@@ -84,9 +100,10 @@ func buildLogger(cfg Config, otelCore zapcore.Core) Logger {
 	logger := zap.New(core, opts...)
 
 	return &zapLogger{
-		zap:       logger,
-		config:    cfg,
-		atomicLvl: atomicLevel,
+		zap:          logger,
+		config:       cfg,
+		atomicLvl:    atomicLevel,
+		otelProvider: otelProvider,
 	}
 }
 
@@ -199,31 +216,76 @@ func parseLevel(level string) zapcore.Level {
 // --- Logger interface implementation ---
 
 func (l *zapLogger) Debug(msg string, fields ...Field) {
-	l.zap.Debug(msg, toZapFields(fields)...)
+	zapFields := toZapFieldsTransient(fields)
+	if zapFields != nil {
+		l.zap.Debug(msg, *zapFields...)
+		putZapFields(zapFields)
+	} else {
+		l.zap.Debug(msg)
+	}
 }
 
 func (l *zapLogger) Info(msg string, fields ...Field) {
-	l.zap.Info(msg, toZapFields(fields)...)
+	zapFields := toZapFieldsTransient(fields)
+	if zapFields != nil {
+		l.zap.Info(msg, *zapFields...)
+		putZapFields(zapFields)
+	} else {
+		l.zap.Info(msg)
+	}
 }
 
 func (l *zapLogger) Warn(msg string, fields ...Field) {
-	l.zap.Warn(msg, toZapFields(fields)...)
+	zapFields := toZapFieldsTransient(fields)
+	if zapFields != nil {
+		l.zap.Warn(msg, *zapFields...)
+		putZapFields(zapFields)
+	} else {
+		l.zap.Warn(msg)
+	}
 }
 
 func (l *zapLogger) Error(msg string, err error, fields ...Field) {
-	zapFields := toZapFields(fields)
-	if err != nil {
-		zapFields = append(zapFields, zap.Error(err))
+	zapFields := toZapFieldsTransient(fields)
+	// We need to append the error, so we must ensure space or handled separately.
+	// zap.Error creates a field.
+	// Since we are using pool, appending might realloc if cap exceeded.
+	// But our pool is default 16.
+
+	if zapFields == nil {
+		// New slice just for error
+		if err != nil {
+			l.zap.Error(msg, zap.Error(err))
+		} else {
+			l.zap.Error(msg)
+		}
+		return
 	}
-	l.zap.Error(msg, zapFields...)
+
+	if err != nil {
+		*zapFields = append(*zapFields, zap.Error(err))
+	}
+	l.zap.Error(msg, *zapFields...)
+	putZapFields(zapFields)
 }
 
 func (l *zapLogger) Fatal(msg string, err error, fields ...Field) {
-	zapFields := toZapFields(fields)
-	if err != nil {
-		zapFields = append(zapFields, zap.Error(err))
+	zapFields := toZapFieldsTransient(fields)
+
+	if zapFields == nil {
+		if err != nil {
+			l.zap.Fatal(msg, zap.Error(err))
+		} else {
+			l.zap.Fatal(msg)
+		}
+		return
 	}
-	l.zap.Fatal(msg, zapFields...)
+
+	if err != nil {
+		*zapFields = append(*zapFields, zap.Error(err))
+	}
+	l.zap.Fatal(msg, *zapFields...)
+	putZapFields(zapFields)
 }
 
 func (l *zapLogger) With(fields ...Field) Logger {
@@ -254,6 +316,17 @@ func (l *zapLogger) Sync() error {
 	return l.zap.Sync()
 }
 
+func (l *zapLogger) Shutdown(ctx context.Context) error {
+	// Sync Zap first
+	_ = l.zap.Sync()
+
+	// Shutdown OTEL if present
+	if l.otelProvider != nil {
+		return l.otelProvider.Shutdown(ctx)
+	}
+	return nil
+}
+
 // SetLevel changes the log level at runtime.
 // This is safe to call from multiple goroutines.
 func (l *zapLogger) SetLevel(level string) {
@@ -267,7 +340,65 @@ func (l *zapLogger) GetLevel() string {
 
 // --- Field conversion ---
 
-// toZapFields converts ion.Field slice to zap.Field slice.
+var zapFieldPool = sync.Pool{
+	New: func() any {
+		// Default cap 16 covers most use cases
+		slice := make([]zap.Field, 0, 16)
+		return &slice
+	},
+}
+
+// toZapFieldsTransient converts ion.Field slice to a pooled zap.Field slice.
+// The caller MUST return the slice to the pool using putZapFields.
+// safe for Info/Debug/Error, NOT safe for With/Named.
+func toZapFieldsTransient(fields []Field) *[]zap.Field {
+	if len(fields) == 0 {
+		return nil
+	}
+
+	ptr := zapFieldPool.Get().(*[]zap.Field)
+	*ptr = (*ptr)[:0]
+
+	for _, f := range fields {
+		switch f.Type {
+		case StringType:
+			*ptr = append(*ptr, zap.String(f.Key, f.StringVal))
+		case Int64Type:
+			*ptr = append(*ptr, zap.Int64(f.Key, f.Integer))
+		case Float64Type:
+			*ptr = append(*ptr, zap.Float64(f.Key, f.Float))
+		case BoolType:
+			*ptr = append(*ptr, zap.Bool(f.Key, f.Integer == 1))
+		case ErrorType:
+			// Ensure Interface is actually an error to avoid panic, though Err constructor ensures it
+			if err, ok := f.Interface.(error); ok {
+				*ptr = append(*ptr, zap.Error(err))
+			} else {
+				*ptr = append(*ptr, zap.Any(f.Key, f.Interface))
+			}
+		default:
+			*ptr = append(*ptr, zap.Any(f.Key, f.Interface))
+		}
+	}
+	return ptr
+}
+
+// putZapFields cleans up the slice and returns it to the pool.
+func putZapFields(ptr *[]zap.Field) {
+	if ptr == nil {
+		return
+	}
+	// Clear slice references to prevent memory leaks (if values held pointers)
+	// Although zap.Field is strict, zap.Any depends on the usage.
+	// For high-perf pool, we validly just reset length, but better to be safe?
+	// Resetting length is enough for the slice, but the array might hold refs.
+	// Given we overwrite on Get, it's mostly fine.
+	*ptr = (*ptr)[:0]
+	zapFieldPool.Put(ptr)
+}
+
+// toZapFields converts ion.Field slice to zap.Field slice (allocating).
+// Use this for With() where the slice is retained.
 func toZapFields(fields []Field) []zap.Field {
 	if len(fields) == 0 {
 		return nil
@@ -275,7 +406,24 @@ func toZapFields(fields []Field) []zap.Field {
 
 	zapFields := make([]zap.Field, 0, len(fields))
 	for _, f := range fields {
-		zapFields = append(zapFields, zap.Any(f.Key, f.Value))
+		switch f.Type {
+		case StringType:
+			zapFields = append(zapFields, zap.String(f.Key, f.StringVal))
+		case Int64Type:
+			zapFields = append(zapFields, zap.Int64(f.Key, f.Integer))
+		case Float64Type:
+			zapFields = append(zapFields, zap.Float64(f.Key, f.Float))
+		case BoolType:
+			zapFields = append(zapFields, zap.Bool(f.Key, f.Integer == 1))
+		case ErrorType:
+			if err, ok := f.Interface.(error); ok {
+				zapFields = append(zapFields, zap.Error(err))
+			} else {
+				zapFields = append(zapFields, zap.Any(f.Key, f.Interface))
+			}
+		default:
+			zapFields = append(zapFields, zap.Any(f.Key, f.Interface))
+		}
 	}
 	return zapFields
 }

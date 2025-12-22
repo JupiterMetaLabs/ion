@@ -57,7 +57,7 @@ type FileConfig struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 
 	// Path is the log file path.
-	// Example: "/var/log/mre/app.log"
+	// Example: "/var/log/app/app.log"
 	Path string `yaml:"path" json:"path"`
 
 	// MaxSizeMB is the maximum size in MB before rotation.
