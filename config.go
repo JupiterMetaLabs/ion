@@ -1,6 +1,9 @@
 package ion
 
-import "time"
+import (
+	"os"
+	"time"
+)
 
 // Config holds the complete logger configuration.
 type Config struct {
@@ -184,4 +187,38 @@ func (c Config) WithFile(path string) Config {
 	c.File.Enabled = true
 	c.File.Path = path
 	return c
+}
+
+// InitFromEnv initializes a logger using environment variables.
+// Supported variables:
+//   - LOG_LEVEL: debug, info, warn, error (default: info)
+//   - SERVICE_NAME: name of the service (default: unknown)
+//   - LOG_DEVELOPMENT: "true" for pretty console output
+//   - OTEL_ENDPOINT: if set, enables OpenTelemetry export
+func InitFromEnv() Logger {
+	cfg := Default()
+
+	if val := os.Getenv("LOG_LEVEL"); val != "" {
+		cfg.Level = val
+	}
+	if val := os.Getenv("SERVICE_NAME"); val != "" {
+		cfg.ServiceName = val
+	}
+	if os.Getenv("LOG_DEVELOPMENT") == "true" {
+		cfg.Development = true
+		cfg.Console.Format = "pretty"
+	}
+	if val := os.Getenv("OTEL_ENDPOINT"); val != "" {
+		cfg.OTEL.Enabled = true
+		cfg.OTEL.Endpoint = val
+	}
+
+	if cfg.OTEL.Enabled && cfg.OTEL.Endpoint != "" {
+		l, err := NewWithOTEL(cfg)
+		if err == nil {
+			return l
+		}
+	}
+
+	return New(cfg)
 }

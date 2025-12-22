@@ -3,7 +3,6 @@ package ion
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -188,32 +187,7 @@ func formatMessage(format string, args ...any) string {
 	return fmt.Sprintf(format, args...)
 }
 
-// --- Global Logger Singleton ---
-
-var (
-	globalLogger Logger
-	globalMu     sync.RWMutex
-)
-
-// SetGlobal sets the global logger instance.
-// Call this early in application startup.
-func SetGlobal(l Logger) {
-	globalMu.Lock()
-	defer globalMu.Unlock()
-	globalLogger = l
-}
-
-// GetGlobal returns the global logger instance.
-// Returns a no-op logger if SetGlobal was never called.
-func GetGlobal() Logger {
-	globalMu.RLock()
-	defer globalMu.RUnlock()
-	if globalLogger == nil {
-		// Return a minimal default logger
-		return New(Default())
-	}
-	return globalLogger
-}
+// --- Shorthand Helpers ---
 
 // L is a shorthand for GetGlobal().
 func L() Logger {

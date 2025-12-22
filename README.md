@@ -19,23 +19,70 @@ It combines the raw speed of [Zap](https://github.com/uber-go/zap) with seamless
 go get github.com/JupiterMetaLabs/ion
 ```
 
-## Quick Start
+## Usage Patterns
 
-### Basic Usage
+### 1. The Singleton Pattern (Recommended for Apps)
+For most applications, setting a global logger instance is the most convenient approach. It allows you to log from any package without passing a logger variable through every function signature.
 
 ```go
-package main
-
-import (
-	"github.com/JupiterMetaLabs/ion"
-)
-
 func main() {
-	// Initialize with default settings
-	logger := ion.New(ion.Default())
-	defer logger.Sync()
+    // Automatically configure from env vars (LOG_LEVEL, SERVICE_NAME, OTEL_ENDPOINT)
+    ion.SetGlobal(ion.InitFromEnv())
+    defer ion.Sync()
 
-	logger.Info("service started", ion.F("port", 8080))
+    ion.Info("starting application")
+    RunServer()
+}
+
+func RunServer() {
+    // Use the package-level helpers
+    ion.Info("server listening on :8080")
+}
+```
+
+### 2. The Dependency Injection Pattern (Recommended for Libraries)
+If you are building a library or prefer explicit dependencies, you can create and pass the `ion.Logger` interface.
+
+```go
+type Server struct {
+    logger ion.Logger
+}
+
+func NewServer(l ion.Logger) *Server {
+    return &Server{logger: l}
+}
+
+func (s *Server) Start() {
+    s.logger.Info("server started")
+}
+```
+
+## Advanced Features
+
+### Child Loggers (`With` and `Named`)
+You can create scoped "child" loggers that inherit configuration but add specific context.
+
+*   **`With`**: Adds permanent fields to every log entry from that child.
+*   **`Named`**: Adds a "logger" name (usually used to identify a component/module).
+
+```go
+// Create a sub-logger for the "database" component
+dbLogger := logger.Named("db").With(ion.String("db_name", "orders"))
+
+dbLogger.Info("connection established") 
+// Output: {"level":"info", "logger":"db", "db_name":"orders", "msg":"..."}
+```
+
+### Context Integration (`WithContext`)
+Ion integrates deeply with `context.Context` to extract OpenTelemetry `trace_id` and `span_id` automatically.
+
+```go
+func HandleRequest(ctx context.Context) {
+    // Creates a child logger that automatically extracts trace information from ctx
+    l := ion.WithContext(ctx)
+    
+    l.Info("processing request")
+    // Output will include "trace_id" and "span_id" if they exist in ctx
 }
 ```
 
