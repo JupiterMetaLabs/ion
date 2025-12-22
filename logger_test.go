@@ -12,7 +12,7 @@ func TestNew_Default(t *testing.T) {
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
 	}
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	// Should not panic
 	logger.Info("test message", F("key", "value"))
@@ -23,7 +23,7 @@ func TestNew_Development(t *testing.T) {
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
 	}
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	logger.Debug("debug message")
 	logger.Info("info message")
@@ -32,7 +32,7 @@ func TestNew_Development(t *testing.T) {
 
 func TestLogger_With(t *testing.T) {
 	logger := New(Default())
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	childLogger := logger.With(F("component", "test"))
 	if childLogger == nil {
@@ -45,7 +45,7 @@ func TestLogger_With(t *testing.T) {
 
 func TestLogger_Named(t *testing.T) {
 	logger := New(Default())
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	namedLogger := logger.Named("my-component")
 	if namedLogger == nil {
@@ -58,7 +58,7 @@ func TestLogger_Named(t *testing.T) {
 
 func TestLogger_WithContext(t *testing.T) {
 	logger := New(Default())
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	ctx := context.Background()
 	ctx = WithRequestID(ctx, "req-123")
@@ -75,7 +75,7 @@ func TestLogger_WithContext(t *testing.T) {
 
 func TestLogger_AllLevels(t *testing.T) {
 	logger := New(Development())
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	logger.Debug("debug", F("level", "debug"))
 	logger.Info("info", F("level", "info"))
@@ -85,7 +85,7 @@ func TestLogger_AllLevels(t *testing.T) {
 
 func TestLogger_Error_WithError(t *testing.T) {
 	logger := New(Default())
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	testErr := &testError{msg: "test error"}
 	logger.Error("operation failed", testErr, F("op", "test"))
@@ -124,7 +124,7 @@ func TestConfig_Defaults(t *testing.T) {
 
 func TestLogger_SetLevel(t *testing.T) {
 	logger := New(Default())
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	// Initial level is "info"
 	if got := logger.GetLevel(); got != "info" {

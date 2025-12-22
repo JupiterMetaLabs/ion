@@ -48,12 +48,6 @@ func BenchmarkAllocations(b *testing.B) {
 	})
 }
 
-// DevNullWriter for pure benchmark (if we needed to attach it, but disabling console is cleaner)
-type devNull struct{}
-
-func (d *devNull) Write(p []byte) (n int, err error) { return len(p), nil }
-func (d *devNull) Sync() error                       { return nil }
-
 func BenchmarkZapPool(b *testing.B) {
 	// Verify sync.Pool reduction
 	// We need to bypass the "Enabled" check to force encoding?
