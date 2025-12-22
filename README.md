@@ -262,6 +262,7 @@ The `Config` struct maps to YAML/JSON and Environment Variables.
 | `console.enabled` | - | `true` | Enable stdout/stderr output. |
 | `console.format` | - | `json` | `json` or `pretty`. |
 | `console.color` | - | `true` | Enable ANSI colors in `pretty` mode. |
+| `console.errors_to_stderr` | - | `true` | Send warn/error/fatal to stderr. |
 | **File** | | | |
 | `file.enabled` | - | `false` | Enable writing to a log file. |
 | `file.path` | - | `""` | Absolute path to the log file. |
@@ -271,14 +272,20 @@ The `Config` struct maps to YAML/JSON and Environment Variables.
 | `file.compress` | - | `true` | Gzip rotated files. |
 | **OTEL** | | | |
 | `otel.enabled` | - | `false` | Enable OpenTelemetry export. |
-| `otel.endpoint` | `OTEL_ENDPOINT` | `""` | Collector address (e.g., `localhost:4317`). |
+| `otel.endpoint` | `OTEL_ENDPOINT`* | `""` | Collector address (e.g., `localhost:4317`). |
 | `otel.protocol` | - | `grpc` | `grpc` or `http`. |
 | `otel.insecure` | - | `false` | Disable TLS (use for local collectors). |
 | `otel.username` | `OTEL_USERNAME` | `""` | Basic Auth username (optional). |
 | `otel.password` | `OTEL_PASSWORD` | `""` | Basic Auth password (optional). |
+| `otel.headers` | - | `{}` | Custom headers (map, for Bearer tokens, etc.). |
 | `otel.timeout` | - | `10s` | Export timeout. |
 | `otel.batch_size` | - | `512` | Max logs per batch. |
 | `otel.export_interval`| - | `5s` | Flush interval. |
+| `otel.attributes` | - | `{}` | Extra resource attributes (map). |
+
+> *`OTEL_ENDPOINT` is only read by `InitFromEnv()`, not automatically by the struct.
+
+
 
 
 ## Architecture
