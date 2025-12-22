@@ -2,6 +2,8 @@ package ion
 
 import (
 	"context"
+	"encoding/base64"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -29,6 +31,20 @@ func New(cfg Config) Logger {
 // NewWithOTEL creates a logger with OTEL export enabled.
 // This wires Zap logs to the OpenTelemetry log pipeline.
 func NewWithOTEL(cfg Config) (Logger, error) {
+	// 1. Handle Basic Auth Wrapper
+	// If Username/Password are provided, inject the Authorization header.
+	// This improves DX by removing the need for users to base64 encode manually.
+	headers := cfg.OTEL.Headers
+	if headers == nil {
+		headers = make(map[string]string)
+	}
+
+	if cfg.OTEL.Username != "" && cfg.OTEL.Password != "" {
+		auth := fmt.Sprintf("%s:%s", cfg.OTEL.Username, cfg.OTEL.Password)
+		encodedAuth := base64.StdEncoding.EncodeToString([]byte(auth))
+		headers["Authorization"] = "Basic " + encodedAuth
+	}
+
 	// Map config to internal OTEL config
 	otelCfg := otel.Config{
 		Enabled:        cfg.OTEL.Enabled,
@@ -36,7 +52,7 @@ func NewWithOTEL(cfg Config) (Logger, error) {
 		Protocol:       cfg.OTEL.Protocol,
 		Insecure:       cfg.OTEL.Insecure,
 		Timeout:        cfg.OTEL.Timeout,
-		Headers:        cfg.OTEL.Headers,
+		Headers:        headers,
 		Attributes:     cfg.OTEL.Attributes,
 		BatchSize:      cfg.OTEL.BatchSize,
 		ExportInterval: cfg.OTEL.ExportInterval,

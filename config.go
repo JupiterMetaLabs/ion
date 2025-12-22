@@ -95,6 +95,12 @@ type OTELConfig struct {
 	// Default: false
 	Insecure bool `yaml:"insecure" json:"insecure"`
 
+	// Username for Basic Authentication (optional).
+	Username string `yaml:"username" json:"username" env:"OTEL_USERNAME"`
+
+	// Password for Basic Authentication (optional).
+	Password string `yaml:"password" json:"password" env:"OTEL_PASSWORD"`
+
 	// Headers are additional headers to send (e.g., auth tokens).
 	Headers map[string]string `yaml:"headers" json:"headers"`
 

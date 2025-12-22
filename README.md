@@ -92,6 +92,11 @@ cfg := ion.Config{
         Enabled:  true,
         Endpoint: "otel-collector:4317", // gRPC by default
         Protocol: "grpc",
+        Username: "admin",        // Optional Basic Auth
+        Password: "supersecret",  // Optional Basic Auth
+        Headers: map[string]string{ // Optional custom headers
+            "X-Custom-Token": "value",
+        },
         BatchSize: 1000,
         Attributes: map[string]string{
             "env": "production",
