@@ -1,6 +1,6 @@
 module github.com/JupiterMetaLabs/ion
 
-go 1.25.1
+go 1.24
 
 require (
 	go.opentelemetry.io/contrib/bridges/otelzap v0.14.0
