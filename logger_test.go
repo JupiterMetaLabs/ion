@@ -274,7 +274,7 @@ var _ = bytes.Buffer{}
 func ExampleLogger() {
 	// 1. Initialize the logger
 	logger := New(Development())
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	// 2. Log a simple message
 	logger.Info("Hello, World!")
@@ -289,7 +289,7 @@ func ExampleLogger() {
 func ExampleLogger_WithContext() {
 	// Initialize logger
 	logger := New(Default())
-	defer logger.Sync()
+	defer func() { _ = logger.Sync() }()
 
 	// Create a context (in a real app, this comes from the request)
 	ctx := context.Background()
