@@ -25,7 +25,7 @@ You might notice that core files like `zap.go` and `config.go` are in the root d
 
 ## Coding Standards
 
--   **Go Version**: We target Go 1.25+.
+-   **Go Version**: We target Go 1.24+.
 -   **Formatting**: code must be formatted with `gofmt` (or `goimports`).
 -   **Linting**: We use strict linting rules. Ensure your code passes `golangci-lint`:
     ```bash
