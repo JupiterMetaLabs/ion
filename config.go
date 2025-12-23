@@ -1,8 +1,10 @@
 package ion
 
 import (
-	"os"
+	"io"
 	"time"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // Config holds the complete logger configuration.
@@ -30,8 +32,11 @@ type Config struct {
 	// File output configuration (with rotation).
 	File FileConfig `yaml:"file" json:"file"`
 
-	// OTEL (OpenTelemetry) exporter configuration.
+	// OTEL (OpenTelemetry) exporter configuration for logs.
 	OTEL OTELConfig `yaml:"otel" json:"otel"`
+
+	// Tracing configuration for distributed tracing.
+	Tracing TracingConfig `yaml:"tracing" json:"tracing"`
 }
 
 // ConsoleConfig configures console (stdout/stderr) output.
@@ -124,6 +129,43 @@ type OTELConfig struct {
 	Attributes map[string]string `yaml:"attributes" json:"attributes"`
 }
 
+// TracingConfig configures distributed tracing.
+type TracingConfig struct {
+	// Enabled controls whether tracing is active.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// Endpoint is the OTEL collector endpoint for traces.
+	// Falls back to OTEL.Endpoint if not set.
+	Endpoint string `yaml:"endpoint" json:"endpoint"`
+
+	// Protocol: "grpc" or "http".
+	Protocol string `yaml:"protocol" json:"protocol"`
+
+	// Insecure disables TLS.
+	Insecure bool `yaml:"insecure" json:"insecure"`
+
+	// Sampler configuration: "always", "never", or "ratio:0.5"
+	Sampler string `yaml:"sampler" json:"sampler"`
+
+	// Propagators: ["tracecontext", "baggage"]
+	Propagators []string `yaml:"propagators" json:"propagators"`
+
+	// BatchSize for span export.
+	BatchSize int `yaml:"batch_size" json:"batch_size"`
+
+	// ExportInterval for batch export.
+	ExportInterval time.Duration `yaml:"export_interval" json:"export_interval"`
+
+	// Timeout for export.
+	Timeout time.Duration `yaml:"timeout" json:"timeout"`
+
+	// Headers for authentication.
+	Headers map[string]string `yaml:"headers" json:"headers"`
+
+	// Attributes for tracing.
+	Attributes map[string]string `yaml:"attributes" json:"attributes"`
+}
+
 // Default returns a Config with sensible production defaults.
 func Default() Config {
 	return Config{
@@ -189,58 +231,22 @@ func (c Config) WithFile(path string) Config {
 	return c
 }
 
-// InitFromEnv initializes a logger using environment variables.
-// This is the recommended way to configure ion in production deployments.
-//
-// Supported variables:
-//   - LOG_LEVEL: debug, info, warn, error (default: info)
-//   - LOG_DEVELOPMENT: "true" for pretty console output
-//   - SERVICE_NAME: name of the service (default: unknown)
-//   - SERVICE_VERSION: version of the service
-//   - OTEL_ENDPOINT: collector address, enables OTEL if set (e.g., "localhost:4317")
-//   - OTEL_INSECURE: "true" to disable TLS for OTEL connection
-//   - OTEL_USERNAME: Basic Auth username for OTEL collector
-//   - OTEL_PASSWORD: Basic Auth password for OTEL collector
-func InitFromEnv() Logger {
-	cfg := Default()
+// WithTracing returns a copy of the config with tracing enabled.
+func (c Config) WithTracing(endpoint string) Config {
+	c.Tracing.Enabled = true
+	if endpoint != "" {
+		c.Tracing.Endpoint = endpoint
+	}
+	return c
+}
 
-	// Core settings
-	if val := os.Getenv("LOG_LEVEL"); val != "" {
-		cfg.Level = val
+// NewFileWriter creates a log file writer with rotation.
+func NewFileWriter(cfg FileConfig) io.Writer {
+	return &lumberjack.Logger{
+		Filename:   cfg.Path,
+		MaxSize:    cfg.MaxSizeMB,
+		MaxBackups: cfg.MaxBackups,
+		MaxAge:     cfg.MaxAgeDays,
+		Compress:   cfg.Compress,
 	}
-	if val := os.Getenv("SERVICE_NAME"); val != "" {
-		cfg.ServiceName = val
-	}
-	if val := os.Getenv("SERVICE_VERSION"); val != "" {
-		cfg.Version = val
-	}
-	if os.Getenv("LOG_DEVELOPMENT") == "true" {
-		cfg.Development = true
-		cfg.Console.Format = "pretty"
-	}
-
-	// OTEL settings
-	if val := os.Getenv("OTEL_ENDPOINT"); val != "" {
-		cfg.OTEL.Enabled = true
-		cfg.OTEL.Endpoint = val
-	}
-	if os.Getenv("OTEL_INSECURE") == "true" {
-		cfg.OTEL.Insecure = true
-	}
-	if val := os.Getenv("OTEL_USERNAME"); val != "" {
-		cfg.OTEL.Username = val
-	}
-	if val := os.Getenv("OTEL_PASSWORD"); val != "" {
-		cfg.OTEL.Password = val
-	}
-
-	// Create logger with OTEL if configured
-	if cfg.OTEL.Enabled && cfg.OTEL.Endpoint != "" {
-		l, err := NewWithOTEL(cfg)
-		if err == nil {
-			return l
-		}
-	}
-
-	return New(cfg)
 }

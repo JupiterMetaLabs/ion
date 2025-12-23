@@ -40,7 +40,6 @@ package ion
 
 import (
 	"context"
-	"sync"
 )
 
 // Logger is the primary logging interface.
@@ -166,73 +165,4 @@ func Err(err error) Field {
 		return Field{Key: "error", Type: AnyType, Interface: nil}
 	}
 	return Field{Key: "error", Type: ErrorType, Interface: err}
-}
-
-// --- Global Logger Support ---
-
-var (
-	globalLogger Logger = New(Default())
-	globalMu     sync.RWMutex
-)
-
-// SetGlobal sets the global logger instance.
-// Applications should call this during initialization.
-func SetGlobal(l Logger) {
-	if l != nil {
-		globalMu.Lock()
-		defer globalMu.Unlock()
-		globalLogger = l
-	}
-}
-
-// GetGlobal returns the current global logger instance.
-func GetGlobal() Logger {
-	globalMu.RLock()
-	defer globalMu.RUnlock()
-	return globalLogger
-}
-
-// Debug logs a message at debug level to the global logger.
-func Debug(ctx context.Context, msg string, fields ...Field) {
-	GetGlobal().Debug(ctx, msg, fields...)
-}
-
-// Info logs a message at info level to the global logger.
-func Info(ctx context.Context, msg string, fields ...Field) {
-	GetGlobal().Info(ctx, msg, fields...)
-}
-
-// Warn logs a message at warn level to the global logger.
-func Warn(ctx context.Context, msg string, fields ...Field) {
-	GetGlobal().Warn(ctx, msg, fields...)
-}
-
-// Error logs a message at error level to the global logger.
-func Error(ctx context.Context, msg string, err error, fields ...Field) {
-	GetGlobal().Error(ctx, msg, err, fields...)
-}
-
-// Fatal logs a message at fatal level to the global logger.
-func Fatal(ctx context.Context, msg string, err error, fields ...Field) {
-	GetGlobal().Fatal(ctx, msg, err, fields...)
-}
-
-// With returns a child logger from the global logger.
-func With(fields ...Field) Logger {
-	return GetGlobal().With(fields...)
-}
-
-// Named returns a named sub-logger from the global logger.
-func Named(name string) Logger {
-	return GetGlobal().Named(name)
-}
-
-// Sync flushes the global logger.
-func Sync() error {
-	return GetGlobal().Sync()
-}
-
-// Shutdown gracefully shuts down the global logger.
-func Shutdown(ctx context.Context) error {
-	return GetGlobal().Shutdown(ctx)
 }

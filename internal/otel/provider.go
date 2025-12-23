@@ -16,6 +16,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// Debug enables debug logging for OTEL setup.
+var Debug bool
+
 // Config mirrors the public OTELConfig but for internal use
 type Config struct {
 	Enabled        bool

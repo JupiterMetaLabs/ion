@@ -22,18 +22,16 @@ type zapLogger struct {
 	otelProvider *otel.Provider
 }
 
-// New creates a new Logger from the provided configuration.
-// This is the main constructor for ion.
-func New(cfg Config) Logger {
+// newZapLogger creates a new Logger from the provided configuration.
+// Internal - use ion.New() instead.
+func newZapLogger(cfg Config) Logger {
 	return buildLogger(cfg, nil, nil)
 }
 
-// NewWithOTEL creates a logger with OTEL export enabled.
-// This wires Zap logs to the OpenTelemetry log pipeline.
-func NewWithOTEL(cfg Config) (Logger, error) {
-	// 1. Handle Basic Auth Wrapper
-	// If Username/Password are provided, inject the Authorization header.
-	// This improves DX by removing the need for users to base64 encode manually.
+// newZapLoggerWithOTEL creates a logger with OTEL export enabled.
+// Internal - use ion.New() instead.
+func newZapLoggerWithOTEL(cfg Config) (Logger, error) {
+	// Handle Basic Auth - inject Authorization header from Username/Password
 	headers := cfg.OTEL.Headers
 	if headers == nil {
 		headers = make(map[string]string)

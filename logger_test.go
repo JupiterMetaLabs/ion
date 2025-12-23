@@ -9,7 +9,7 @@ import (
 
 func TestNew_Default(t *testing.T) {
 	ctx := context.Background()
-	logger := New(Default())
+	logger := newZapLogger(Default())
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
 	}
@@ -21,7 +21,7 @@ func TestNew_Default(t *testing.T) {
 
 func TestNew_Development(t *testing.T) {
 	ctx := context.Background()
-	logger := New(Development())
+	logger := newZapLogger(Development())
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
 	}
@@ -34,7 +34,7 @@ func TestNew_Development(t *testing.T) {
 
 func TestLogger_With(t *testing.T) {
 	ctx := context.Background()
-	logger := New(Default())
+	logger := newZapLogger(Default())
 	defer func() { _ = logger.Sync() }()
 
 	childLogger := logger.With(F("component", "test"))
@@ -48,7 +48,7 @@ func TestLogger_With(t *testing.T) {
 
 func TestLogger_Named(t *testing.T) {
 	ctx := context.Background()
-	logger := New(Default())
+	logger := newZapLogger(Default())
 	defer func() { _ = logger.Sync() }()
 
 	namedLogger := logger.Named("my-component")
@@ -61,7 +61,7 @@ func TestLogger_Named(t *testing.T) {
 }
 
 func TestLogger_ContextExtraction(t *testing.T) {
-	logger := New(Default())
+	logger := newZapLogger(Default())
 	defer func() { _ = logger.Sync() }()
 
 	ctx := context.Background()
@@ -75,7 +75,7 @@ func TestLogger_ContextExtraction(t *testing.T) {
 
 func TestLogger_AllLevels(t *testing.T) {
 	ctx := context.Background()
-	logger := New(Development())
+	logger := newZapLogger(Development())
 	defer func() { _ = logger.Sync() }()
 
 	logger.Debug(ctx, "debug", F("level", "debug"))
@@ -86,7 +86,7 @@ func TestLogger_AllLevels(t *testing.T) {
 
 func TestLogger_Error_WithError(t *testing.T) {
 	ctx := context.Background()
-	logger := New(Default())
+	logger := newZapLogger(Default())
 	defer func() { _ = logger.Sync() }()
 
 	testErr := &testError{msg: "test error"}
@@ -125,7 +125,7 @@ func TestConfig_Defaults(t *testing.T) {
 }
 
 func TestLogger_SetLevel(t *testing.T) {
-	logger := New(Default())
+	logger := newZapLogger(Default())
 	defer func() { _ = logger.Sync() }()
 
 	// Initial level is "info"
@@ -277,7 +277,7 @@ func ExampleLogger() {
 	ctx := context.Background()
 
 	// 1. Initialize the logger
-	logger := New(Development())
+	logger := newZapLogger(Development())
 	defer func() { _ = logger.Sync() }()
 
 	// 2. Log a simple message (context-first)
@@ -292,7 +292,7 @@ func ExampleLogger() {
 
 func ExampleLogger_contextIntegration() {
 	// Initialize logger
-	logger := New(Default())
+	logger := newZapLogger(Default())
 	defer func() { _ = logger.Sync() }()
 
 	// Create a context (in a real app, this comes from the request)
