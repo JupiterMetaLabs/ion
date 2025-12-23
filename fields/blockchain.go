@@ -193,3 +193,52 @@ func Enabled(on bool) ion.Field {
 func Reason(r string) ion.Field {
 	return ion.String("reason", r)
 }
+
+// --- Error Fields ---
+
+// ErrorMsg creates an error message field for non-fatal error logging.
+// Use this when logging at Warn level where the error parameter isn't available.
+// For Error level, prefer using the error parameter: log.Error(ctx, msg, err, ...)
+func ErrorMsg(err error) ion.Field {
+	if err == nil {
+		return ion.String("error", "")
+	}
+	return ion.String("error", err.Error())
+}
+
+// --- Transaction Fields (Extended) ---
+
+// Nonce creates a transaction nonce field.
+func Nonce(n uint64) ion.Field {
+	return ion.Int64("nonce", int64(n))
+}
+
+// GasLimit creates a gas limit field.
+func GasLimit(limit uint64) ion.Field {
+	return ion.Int64("gas_limit", int64(limit))
+}
+
+// GasPrice creates a gas price field (in smallest unit, e.g., wei).
+func GasPrice(price uint64) ion.Field {
+	return ion.Int64("gas_price", int64(price))
+}
+
+// GasUsed creates a gas used field.
+func GasUsed(used uint64) ion.Field {
+	return ion.Int64("gas_used", int64(used))
+}
+
+// Value creates a transaction value field.
+func Value(val string) ion.Field {
+	return ion.String("value", val)
+}
+
+// FromAddress creates a "from" address field.
+func FromAddress(addr string) ion.Field {
+	return ion.String("from_address", addr)
+}
+
+// ToAddress creates a "to" address field.
+func ToAddress(addr string) ion.Field {
+	return ion.String("to_address", addr)
+}

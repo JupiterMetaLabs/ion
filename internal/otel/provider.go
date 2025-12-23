@@ -47,7 +47,7 @@ func Setup(cfg Config, serviceName, version string) (*Provider, error) {
 
 	ctx := context.Background()
 
-	// Build resource
+	// Build resource attributes
 	attrs := []attribute.KeyValue{
 		semconv.ServiceName(serviceName),
 		semconv.ServiceVersion(version),
@@ -56,9 +56,15 @@ func Setup(cfg Config, serviceName, version string) (*Provider, error) {
 		attrs = append(attrs, attribute.String(k, v))
 	}
 
-	res, err := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(semconv.SchemaURL, attrs...),
+	// Create resource with explicit detectors to avoid schema URL conflicts.
+	// Using resource.New() instead of resource.Merge(resource.Default(), ...)
+	// prevents schema version mismatches between the SDK's internal schema
+	// and our semconv import.
+	res, err := resource.New(ctx,
+		resource.WithHost(),
+		resource.WithOS(),
+		resource.WithProcess(),
+		resource.WithAttributes(attrs...),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OTEL resource: %w", err)
