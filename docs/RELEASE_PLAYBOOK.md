@@ -55,7 +55,7 @@ Post this announcement to your engineering Slack/Teams channel:
 > We have published `ion`, our new enterprise-grade structured logger tailored for JupiterMeta's blockchain services.
 >
 > **Why use it?**
-> *   🚀 **Zero-Allocation**: Optimized for high-throughput hot paths.
+> *   🚀 **Low-Allocation**: Pool-optimized for high-throughput hot paths.
 > *   🔭 **OTEL Native**: Automatic trace propagation and export.
 > *   🛡️ **Safe**: Graceful shutdown and resource management.
 >

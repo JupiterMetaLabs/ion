@@ -231,75 +231,98 @@ func parseLevel(level string) zapcore.Level {
 
 // --- Logger interface implementation ---
 
-func (l *zapLogger) Debug(msg string, fields ...Field) {
+// zapLogFunc is a function type for zap's log methods.
+// This allows us to pass the appropriate log method to the helper.
+type zapLogFunc func(msg string, fields ...zap.Field)
+
+// logWithFields is a helper that consolidates the common pattern of:
+// 1. Converting ion.Field to zap.Field (with pooling)
+// 2. Extracting context fields (trace_id, span_id, etc.)
+// 3. Calling the appropriate zap log method
+// 4. Returning the pooled slice
+//
+// Performance optimization: We skip context extraction for context.Background()
+// since it can never contain trace information, saving one allocation for
+// startup/shutdown logs.
+func (l *zapLogger) logWithFields(ctx context.Context, logFn zapLogFunc, msg string, fields []Field) {
 	zapFields := toZapFieldsTransient(fields)
+
+	// Short-circuit: context.Background() and context.TODO() never have trace info
+	var contextZapFields []zap.Field
+	if ctx != nil && ctx != context.Background() && ctx != context.TODO() {
+		contextZapFields = extractContextZapFields(ctx)
+	}
+
 	if zapFields != nil {
-		l.zap.Debug(msg, *zapFields...)
+		if len(contextZapFields) > 0 {
+			*zapFields = append(*zapFields, contextZapFields...)
+		}
+		logFn(msg, *zapFields...)
 		putZapFields(zapFields)
+	} else if len(contextZapFields) > 0 {
+		logFn(msg, contextZapFields...)
 	} else {
-		l.zap.Debug(msg)
+		logFn(msg)
 	}
 }
 
-func (l *zapLogger) Info(msg string, fields ...Field) {
-	zapFields := toZapFieldsTransient(fields)
-	if zapFields != nil {
-		l.zap.Info(msg, *zapFields...)
-		putZapFields(zapFields)
-	} else {
-		l.zap.Info(msg)
-	}
+// Debug logs a message at debug level.
+func (l *zapLogger) Debug(ctx context.Context, msg string, fields ...Field) {
+	l.logWithFields(ctx, l.zap.Debug, msg, fields)
 }
 
-func (l *zapLogger) Warn(msg string, fields ...Field) {
-	zapFields := toZapFieldsTransient(fields)
-	if zapFields != nil {
-		l.zap.Warn(msg, *zapFields...)
-		putZapFields(zapFields)
-	} else {
-		l.zap.Warn(msg)
-	}
+// Info logs a message at info level.
+func (l *zapLogger) Info(ctx context.Context, msg string, fields ...Field) {
+	l.logWithFields(ctx, l.zap.Info, msg, fields)
 }
 
-func (l *zapLogger) Error(msg string, err error, fields ...Field) {
+// Warn logs a message at warn level.
+func (l *zapLogger) Warn(ctx context.Context, msg string, fields ...Field) {
+	l.logWithFields(ctx, l.zap.Warn, msg, fields)
+}
+
+// Error logs a message at error level with an optional error.
+func (l *zapLogger) Error(ctx context.Context, msg string, err error, fields ...Field) {
 	zapFields := toZapFieldsTransient(fields)
-	// We need to append the error, so we must ensure space or handled separately.
-	// zap.Error creates a field.
-	// Since we are using pool, appending might realloc if cap exceeded.
-	// But our pool is default 16.
+	contextZapFields := extractContextZapFields(ctx)
 
 	if zapFields == nil {
-		// New slice just for error
+		var allFields []zap.Field
 		if err != nil {
-			l.zap.Error(msg, zap.Error(err))
-		} else {
-			l.zap.Error(msg)
+			allFields = append(allFields, zap.Error(err))
 		}
+		allFields = append(allFields, contextZapFields...)
+		l.zap.Error(msg, allFields...)
 		return
 	}
 
 	if err != nil {
 		*zapFields = append(*zapFields, zap.Error(err))
 	}
+	*zapFields = append(*zapFields, contextZapFields...)
 	l.zap.Error(msg, *zapFields...)
 	putZapFields(zapFields)
 }
 
-func (l *zapLogger) Fatal(msg string, err error, fields ...Field) {
+// Fatal logs a message at fatal level and calls os.Exit(1).
+func (l *zapLogger) Fatal(ctx context.Context, msg string, err error, fields ...Field) {
 	zapFields := toZapFieldsTransient(fields)
+	contextZapFields := extractContextZapFields(ctx)
 
 	if zapFields == nil {
+		var allFields []zap.Field
 		if err != nil {
-			l.zap.Fatal(msg, zap.Error(err))
-		} else {
-			l.zap.Fatal(msg)
+			allFields = append(allFields, zap.Error(err))
 		}
+		allFields = append(allFields, contextZapFields...)
+		l.zap.Fatal(msg, allFields...)
 		return
 	}
 
 	if err != nil {
 		*zapFields = append(*zapFields, zap.Error(err))
 	}
+	*zapFields = append(*zapFields, contextZapFields...)
 	l.zap.Fatal(msg, *zapFields...)
 	putZapFields(zapFields)
 }
@@ -312,13 +335,7 @@ func (l *zapLogger) With(fields ...Field) Logger {
 	}
 }
 
-func (l *zapLogger) WithContext(ctx context.Context) Logger {
-	contextFields := extractContextFields(ctx)
-	if len(contextFields) == 0 {
-		return l
-	}
-	return l.With(contextFields...)
-}
+// NOTE: WithContext was removed - context is now passed directly to log methods.
 
 func (l *zapLogger) Named(name string) Logger {
 	return &zapLogger{

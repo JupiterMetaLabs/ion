@@ -190,29 +190,51 @@ func (c Config) WithFile(path string) Config {
 }
 
 // InitFromEnv initializes a logger using environment variables.
+// This is the recommended way to configure ion in production deployments.
+//
 // Supported variables:
 //   - LOG_LEVEL: debug, info, warn, error (default: info)
-//   - SERVICE_NAME: name of the service (default: unknown)
 //   - LOG_DEVELOPMENT: "true" for pretty console output
-//   - OTEL_ENDPOINT: if set, enables OpenTelemetry export
+//   - SERVICE_NAME: name of the service (default: unknown)
+//   - SERVICE_VERSION: version of the service
+//   - OTEL_ENDPOINT: collector address, enables OTEL if set (e.g., "localhost:4317")
+//   - OTEL_INSECURE: "true" to disable TLS for OTEL connection
+//   - OTEL_USERNAME: Basic Auth username for OTEL collector
+//   - OTEL_PASSWORD: Basic Auth password for OTEL collector
 func InitFromEnv() Logger {
 	cfg := Default()
 
+	// Core settings
 	if val := os.Getenv("LOG_LEVEL"); val != "" {
 		cfg.Level = val
 	}
 	if val := os.Getenv("SERVICE_NAME"); val != "" {
 		cfg.ServiceName = val
 	}
+	if val := os.Getenv("SERVICE_VERSION"); val != "" {
+		cfg.Version = val
+	}
 	if os.Getenv("LOG_DEVELOPMENT") == "true" {
 		cfg.Development = true
 		cfg.Console.Format = "pretty"
 	}
+
+	// OTEL settings
 	if val := os.Getenv("OTEL_ENDPOINT"); val != "" {
 		cfg.OTEL.Enabled = true
 		cfg.OTEL.Endpoint = val
 	}
+	if os.Getenv("OTEL_INSECURE") == "true" {
+		cfg.OTEL.Insecure = true
+	}
+	if val := os.Getenv("OTEL_USERNAME"); val != "" {
+		cfg.OTEL.Username = val
+	}
+	if val := os.Getenv("OTEL_PASSWORD"); val != "" {
+		cfg.OTEL.Password = val
+	}
 
+	// Create logger with OTEL if configured
 	if cfg.OTEL.Enabled && cfg.OTEL.Endpoint != "" {
 		l, err := NewWithOTEL(cfg)
 		if err == nil {

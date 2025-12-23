@@ -4,11 +4,15 @@ import (
 	"context"
 
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 )
 
-// Context keys for custom values.
+// contextKey is an unexported type for context keys defined in this package.
+// This prevents collisions with keys defined in other packages.
 type contextKey string
 
+// Context keys for storing log-relevant values in context.Context.
+// These values are automatically extracted and added to log entries.
 const (
 	requestIDKey contextKey = "request_id"
 	userIDKey    contextKey = "user_id"
@@ -17,7 +21,7 @@ const (
 )
 
 // WithRequestID adds a request ID to the context.
-// This ID will be automatically included in logs via WithContext().
+// This ID will be automatically included in logs.
 func WithRequestID(ctx context.Context, requestID string) context.Context {
 	return context.WithValue(ctx, requestIDKey, requestID)
 }
@@ -48,40 +52,40 @@ func UserIDFromContext(ctx context.Context) string {
 	return ""
 }
 
-// extractContextFields pulls trace/span IDs and custom values from context.
-// Called by WithContext() to automatically add context fields to logs.
-func extractContextFields(ctx context.Context) []Field {
+// extractContextZapFields pulls trace/span IDs and custom values from context.
+// Returns zap.Field slice directly for use in log methods (avoids Field conversion).
+func extractContextZapFields(ctx context.Context) []zap.Field {
 	if ctx == nil {
 		return nil
 	}
 
-	fields := make([]Field, 0, 4)
+	fields := make([]zap.Field, 0, 4)
 
 	// Extract OTEL trace context (if available)
 	spanCtx := trace.SpanContextFromContext(ctx)
 	if spanCtx.IsValid() {
 		fields = append(fields,
-			String("trace_id", spanCtx.TraceID().String()),
-			String("span_id", spanCtx.SpanID().String()),
+			zap.String("trace_id", spanCtx.TraceID().String()),
+			zap.String("span_id", spanCtx.SpanID().String()),
 		)
 	} else {
 		// Fallback to manual trace ID if set
 		if traceID, ok := ctx.Value(traceIDKey).(string); ok && traceID != "" {
-			fields = append(fields, String("trace_id", traceID))
+			fields = append(fields, zap.String("trace_id", traceID))
 		}
 		if spanID, ok := ctx.Value(spanIDKey).(string); ok && spanID != "" {
-			fields = append(fields, String("span_id", spanID))
+			fields = append(fields, zap.String("span_id", spanID))
 		}
 	}
 
 	// Extract request ID
 	if reqID, ok := ctx.Value(requestIDKey).(string); ok && reqID != "" {
-		fields = append(fields, String("request_id", reqID))
+		fields = append(fields, zap.String("request_id", reqID))
 	}
 
 	// Extract user ID
 	if userID, ok := ctx.Value(userIDKey).(string); ok && userID != "" {
-		fields = append(fields, String("user_id", userID))
+		fields = append(fields, zap.String("user_id", userID))
 	}
 
 	return fields

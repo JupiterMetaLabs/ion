@@ -161,22 +161,20 @@ func (t *TelemetryLog) log(level zapcore.Level, msg string, err error, fields []
 	}
 	allFields = append(allFields, fields...)
 
-	// Log with context (injects trace_id, span_id)
-	ctxLogger := t.logger.WithContext(ctx)
-
+	// Log with context (context is the first parameter)
 	switch level {
 	case zapcore.DebugLevel:
-		ctxLogger.Debug(msg, allFields...)
+		t.logger.Debug(ctx, msg, allFields...)
 	case zapcore.InfoLevel:
-		ctxLogger.Info(msg, allFields...)
+		t.logger.Info(ctx, msg, allFields...)
 	case zapcore.WarnLevel:
-		ctxLogger.Warn(msg, allFields...)
+		t.logger.Warn(ctx, msg, allFields...)
 	case zapcore.ErrorLevel:
-		ctxLogger.Error(msg, err, allFields...)
+		t.logger.Error(ctx, msg, err, allFields...)
 	case zapcore.FatalLevel:
-		ctxLogger.Fatal(msg, err, allFields...)
+		t.logger.Fatal(ctx, msg, err, allFields...)
 	default:
-		ctxLogger.Info(msg, allFields...)
+		t.logger.Info(ctx, msg, allFields...)
 	}
 }
 

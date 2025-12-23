@@ -8,6 +8,7 @@ import (
 )
 
 func TestNew_Default(t *testing.T) {
+	ctx := context.Background()
 	logger := New(Default())
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
@@ -15,22 +16,24 @@ func TestNew_Default(t *testing.T) {
 	defer func() { _ = logger.Sync() }()
 
 	// Should not panic
-	logger.Info("test message", F("key", "value"))
+	logger.Info(ctx, "test message", F("key", "value"))
 }
 
 func TestNew_Development(t *testing.T) {
+	ctx := context.Background()
 	logger := New(Development())
 	if logger == nil {
 		t.Fatal("expected non-nil logger")
 	}
 	defer func() { _ = logger.Sync() }()
 
-	logger.Debug("debug message")
-	logger.Info("info message")
-	logger.Warn("warn message")
+	logger.Debug(ctx, "debug message")
+	logger.Info(ctx, "info message")
+	logger.Warn(ctx, "warn message")
 }
 
 func TestLogger_With(t *testing.T) {
+	ctx := context.Background()
 	logger := New(Default())
 	defer func() { _ = logger.Sync() }()
 
@@ -40,10 +43,11 @@ func TestLogger_With(t *testing.T) {
 	}
 
 	// Should not panic
-	childLogger.Info("child message")
+	childLogger.Info(ctx, "child message")
 }
 
 func TestLogger_Named(t *testing.T) {
+	ctx := context.Background()
 	logger := New(Default())
 	defer func() { _ = logger.Sync() }()
 
@@ -53,10 +57,10 @@ func TestLogger_Named(t *testing.T) {
 	}
 
 	// Should not panic
-	namedLogger.Info("named message")
+	namedLogger.Info(ctx, "named message")
 }
 
-func TestLogger_WithContext(t *testing.T) {
+func TestLogger_ContextExtraction(t *testing.T) {
 	logger := New(Default())
 	defer func() { _ = logger.Sync() }()
 
@@ -64,31 +68,29 @@ func TestLogger_WithContext(t *testing.T) {
 	ctx = WithRequestID(ctx, "req-123")
 	ctx = WithUserID(ctx, "user-456")
 
-	ctxLogger := logger.WithContext(ctx)
-	if ctxLogger == nil {
-		t.Fatal("expected non-nil context logger")
-	}
-
-	// Should not panic
-	ctxLogger.Info("context message")
+	// Context is passed directly to log methods
+	// Should not panic and should extract trace fields
+	logger.Info(ctx, "context message")
 }
 
 func TestLogger_AllLevels(t *testing.T) {
+	ctx := context.Background()
 	logger := New(Development())
 	defer func() { _ = logger.Sync() }()
 
-	logger.Debug("debug", F("level", "debug"))
-	logger.Info("info", F("level", "info"))
-	logger.Warn("warn", F("level", "warn"))
-	logger.Error("error", nil, F("level", "error"))
+	logger.Debug(ctx, "debug", F("level", "debug"))
+	logger.Info(ctx, "info", F("level", "info"))
+	logger.Warn(ctx, "warn", F("level", "warn"))
+	logger.Error(ctx, "error", nil, F("level", "error"))
 }
 
 func TestLogger_Error_WithError(t *testing.T) {
+	ctx := context.Background()
 	logger := New(Default())
 	defer func() { _ = logger.Sync() }()
 
 	testErr := &testError{msg: "test error"}
-	logger.Error("operation failed", testErr, F("op", "test"))
+	logger.Error(ctx, "operation failed", testErr, F("op", "test"))
 }
 
 type testError struct {
@@ -272,28 +274,32 @@ func TestParseLevel(t *testing.T) {
 var _ = bytes.Buffer{}
 
 func ExampleLogger() {
+	ctx := context.Background()
+
 	// 1. Initialize the logger
 	logger := New(Development())
 	defer func() { _ = logger.Sync() }()
 
-	// 2. Log a simple message
-	logger.Info("Hello, World!")
+	// 2. Log a simple message (context-first)
+	logger.Info(ctx, "Hello, World!")
 
 	// 3. Log with structured fields
-	logger.Info("User logged in",
+	logger.Info(ctx, "User logged in",
 		F("user_id", 42),
 		F("ip", "192.168.1.1"),
 	)
 }
 
-func ExampleLogger_WithContext() {
+func ExampleLogger_contextIntegration() {
 	// Initialize logger
 	logger := New(Default())
 	defer func() { _ = logger.Sync() }()
 
 	// Create a context (in a real app, this comes from the request)
 	ctx := context.Background()
+	ctx = WithRequestID(ctx, "req-123")
 
-	// Log with context to automatically attach trace IDs
-	logger.WithContext(ctx).Info("Processing request")
+	// Context is ALWAYS the first parameter
+	// Trace IDs are extracted automatically
+	logger.Info(ctx, "Processing request")
 }

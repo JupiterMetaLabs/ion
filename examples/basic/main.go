@@ -19,19 +19,21 @@ import (
 // ============================================================================
 
 func example1_GlobalLogger() {
+	ctx := context.Background()
+
 	// One-liner setup from environment variables:
 	// LOG_LEVEL, SERVICE_NAME, LOG_DEVELOPMENT, OTEL_ENDPOINT
 	ion.SetGlobal(ion.InitFromEnv())
 	defer func() { _ = ion.Sync() }()
 
-	// Use package-level helpers anywhere in your code
-	ion.Info("application started")
-	ion.Debug("debug info", ion.String("key", "value"))
-	ion.Warn("something might be wrong")
+	// Use package-level helpers anywhere in your code (context-first)
+	ion.Info(ctx, "application started")
+	ion.Debug(ctx, "debug info", ion.String("key", "value"))
+	ion.Warn(ctx, "something might be wrong")
 
 	// Child logger from global
 	dbLog := ion.Named("database")
-	dbLog.Info("connected to postgres")
+	dbLog.Info(ctx, "connected to postgres")
 }
 
 // ============================================================================
@@ -40,12 +42,14 @@ func example1_GlobalLogger() {
 // ============================================================================
 
 func example2_DependencyInjection() {
+	ctx := context.Background()
+
 	logger := ion.New(ion.Default().WithService("payment-api"))
 	defer func() { _ = logger.Sync() }()
 
 	// Pass logger explicitly to components
 	server := NewServer(logger)
-	server.Start()
+	server.Start(ctx)
 }
 
 type Server struct {
@@ -57,8 +61,8 @@ func NewServer(l ion.Logger) *Server {
 	return &Server{log: l.Named("server")}
 }
 
-func (s *Server) Start() {
-	s.log.Info("server listening", ion.Int("port", 8080))
+func (s *Server) Start(ctx context.Context) {
+	s.log.Info(ctx, "server listening", ion.Int("port", 8080))
 }
 
 // ============================================================================
@@ -67,6 +71,7 @@ func (s *Server) Start() {
 // ============================================================================
 
 func example3_ChildLoggers() {
+	ctx := context.Background()
 	logger := ion.New(ion.Default())
 
 	// Named: Adds a "logger" field to identify the component
@@ -79,24 +84,25 @@ func example3_ChildLoggers() {
 		ion.String("tenant", "acme-corp"),
 	)
 
-	httpLog.Info("request received") // {"logger": "http", ...}
-	grpcLog.Info("rpc called")       // {"logger": "grpc", ...}
-	userLogger.Info("action taken")  // {"user_id": 42, "tenant": "acme-corp", ...}
+	httpLog.Info(ctx, "request received") // {"logger": "http", ...}
+	grpcLog.Info(ctx, "rpc called")       // {"logger": "grpc", ...}
+	userLogger.Info(ctx, "action taken")  // {"user_id": 42, "tenant": "acme-corp", ...}
 }
 
 // ============================================================================
 // Example 4: Context Integration (for Tracing)
-// Demonstrates WithContext for OpenTelemetry trace correlation.
+// Demonstrates context-first logging for OpenTelemetry trace correlation.
 // ============================================================================
 
 func example4_ContextIntegration() {
 	logger := ion.New(ion.Default())
 
 	// Simulate a request context (in real code, this comes from HTTP middleware)
+	// The context carries trace_id and span_id from OTEL
 	ctx := context.Background()
 
-	// WithContext extracts trace_id and span_id from the context
-	logger.WithContext(ctx).Info("processing request",
+	// Context is ALWAYS the first parameter - trace IDs are extracted automatically
+	logger.Info(ctx, "processing request",
 		ion.String("endpoint", "/api/v1/orders"),
 	)
 }
@@ -107,9 +113,10 @@ func example4_ContextIntegration() {
 // ============================================================================
 
 func example5_BlockchainFields() {
+	ctx := context.Background()
 	logger := ion.New(ion.Default().WithService("mempool-router"))
 
-	logger.Info("transaction routed",
+	logger.Info(ctx, "transaction routed",
 		fields.TxHash("0xabc123..."),
 		fields.ShardID(3),
 		fields.Slot(150_000_000),
@@ -125,6 +132,8 @@ func example5_BlockchainFields() {
 // ============================================================================
 
 func example6_ProductionSetup() {
+	ctx := context.Background()
+
 	cfg := ion.Config{
 		Level:       "info",
 		Development: false,
@@ -168,27 +177,27 @@ func example6_ProductionSetup() {
 
 	// CRITICAL: Graceful shutdown to flush all logs and traces
 	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := logger.Shutdown(ctx); err != nil {
+		if err := logger.Shutdown(shutdownCtx); err != nil {
 			fmt.Fprintf(os.Stderr, "logger shutdown error: %v\n", err)
 		}
 	}()
 
 	// Run your application
-	runProductionApp(logger)
+	runProductionApp(ctx, logger)
 }
 
-func runProductionApp(logger ion.Logger) {
+func runProductionApp(ctx context.Context, logger ion.Logger) {
 	log := logger.Named("main")
-	log.Info("service started")
+	log.Info(ctx, "service started")
 
 	// Simulate work
 	time.Sleep(100 * time.Millisecond)
 
 	// Simulate an error
 	err := errors.New("database connection lost")
-	log.Error("critical failure", err, ion.String("component", "db"))
+	log.Error(ctx, "critical failure", err, ion.String("component", "db"))
 
 	// Wait for signal
 	sigChan := make(chan os.Signal, 1)
@@ -200,9 +209,9 @@ func runProductionApp(logger ion.Logger) {
 		sigChan <- syscall.SIGTERM
 	}()
 
-	log.Info("waiting for shutdown signal...")
+	log.Info(ctx, "waiting for shutdown signal...")
 	<-sigChan
-	log.Info("received shutdown signal, exiting...")
+	log.Info(ctx, "received shutdown signal, exiting...")
 }
 
 // ============================================================================

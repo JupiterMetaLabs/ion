@@ -1,45 +1,50 @@
 package ion_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/JupiterMetaLabs/ion"
 )
 
+// BenchmarkAllocations measures allocation overhead for different field creation patterns.
+// Note: context.Background() is short-circuited (no extraction), so this measures the minimal path.
 func BenchmarkAllocations(b *testing.B) {
-	// Setup silent logger
+	ctx := context.Background()
+
+	// Setup silent logger - Console.Enabled=false creates a NopCore.
+	// Even with NopCore, our wrapper methods (toZapFieldsTransient, etc.) still execute,
+	// so we're measuring the ion overhead, not Zap's encoding.
 	cfg := ion.Default()
-	cfg.Console.Enabled = false // Disable output to test core logic only
+	cfg.Console.Enabled = false
 	logger := ion.New(cfg)
 
-	// Create a huge slice to ensure pool is engaged if we were verifying that
-	// But here we verify zero-alloc field creation
 	b.Run("Field_Int", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			logger.Info("test", ion.Int("key", 123))
+			logger.Info(ctx, "test", ion.Int("key", 123))
 		}
 	})
 
 	b.Run("Field_String", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			logger.Info("test", ion.String("key", "val"))
+			logger.Info(ctx, "test", ion.String("key", "val"))
 		}
 	})
 
 	b.Run("Field_F_Int", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			// F accepts any, so this WILL allocate (box the int)
-			logger.Info("test", ion.F("key", 123))
+			// F() accepts any, so this WILL allocate (boxing the int to interface{})
+			logger.Info(ctx, "test", ion.F("key", 123))
 		}
 	})
 
 	b.Run("Complex_Usage", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			logger.Info("transaction processed",
+			logger.Info(ctx, "transaction processed",
 				ion.Int("user_id", 12345),
 				ion.String("status", "ok"),
 				ion.Float64("latency", 10.5),
@@ -48,33 +53,43 @@ func BenchmarkAllocations(b *testing.B) {
 	})
 }
 
+// BenchmarkContextExtraction measures the allocation cost when context contains trace info.
+// This is the realistic production path where trace_id/span_id are extracted.
+func BenchmarkContextExtraction(b *testing.B) {
+	cfg := ion.Default()
+	cfg.Console.Enabled = false
+	logger := ion.New(cfg)
+
+	// Create context WITH trace info (not Background, so extraction happens)
+	baseCtx := context.Background()
+	ctxWithTrace := ion.WithRequestID(baseCtx, "req-12345")
+	ctxWithTrace = ion.WithUserID(ctxWithTrace, "user-67890")
+
+	b.Run("Background_NoExtraction", func(b *testing.B) {
+		b.ReportAllocs()
+		ctx := context.Background()
+		for i := 0; i < b.N; i++ {
+			logger.Info(ctx, "test", ion.String("key", "val"))
+		}
+	})
+
+	b.Run("WithTraceContext", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			logger.Info(ctxWithTrace, "test", ion.String("key", "val"))
+		}
+	})
+}
+
+// BenchmarkZapPool verifies that the sync.Pool for zap.Field slices is working correctly.
+// Pool reuse reduces allocations when logging with multiple fields.
+//
+// Implementation note:
+// - toZapFieldsTransient() gets a slice from pool, populates it, and putZapFields() returns it
+// - Even with NopCore (no actual output), we measure our wrapper overhead
+// - The pool is sized for 16 fields by default
 func BenchmarkZapPool(b *testing.B) {
-	// Verify sync.Pool reduction
-	// We need to bypass the "Enabled" check to force encoding?
-	// Config logic: if !Enabled, it might skip core.
-	// So we need a NopCore or a DiscardCore to measuring encoding cost?
-	// The current Default() with Enabled=false creates a NopCore in buildLogger because no cores are added.
-	// NopCore returns immediately.
-	// To strictly test allocation of the `toZapFields` (our pool logic), we need a real core that discards.
-
-	// Hack: Configure file output to /dev/null to force conversion logic?
-	// Or just trust the profile. Use existing Logger logic.
-
-	// Actually, if we use Console.Enabled=false and no File, buildLogger returns zapcore.NewNopCore().
-	// zap.Logger.Info checks if core is enabled. NopCore is disabled for all levels?
-	// Wait, zapcore.NewNopCore() returns a core that is enabled for nothing?
-	// Or enabled for everything but does nothing?
-	// Checked: zapcore.NewNopCore() -> Write does nothing, Check returns checked entry that writes nothing.
-
-	// To test OUR logic (the zapLogger wrapper methods), we need to ensure l.zap methods are called.
-	// wrapper methods:
-	// func (l *zapLogger) Info(msg string, fields ...Field) {
-	//    zapFields := toZapFieldsTransient(fields) <-- THIS IS WHAT WE WANT TO BENCHMARK
-	//    if zapFields != nil {
-	//        l.zap.Info(msg, *zapFields...) <-- Zap will check Core here.
-
-	// So even if Core is Nop, our wrapper executes `toZapFieldsTransient`.
-	// So the benchmark IS valid for measuring OUR allocation overhead.
+	ctx := context.Background()
 
 	cfg := ion.Default()
 	cfg.Console.Enabled = false
@@ -83,7 +98,7 @@ func BenchmarkZapPool(b *testing.B) {
 	b.Run("Pool_Reuse", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			logger.Info("benchmark", ion.Int("a", 1), ion.Int("b", 2), ion.Int("c", 3))
+			logger.Info(ctx, "benchmark", ion.Int("a", 1), ion.Int("b", 2), ion.Int("c", 3))
 		}
 	})
 }

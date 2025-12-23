@@ -1,34 +1,41 @@
 // Package ion provides enterprise-grade structured logging for JupiterMeta blockchain applications.
 //
+// Ion is designed for distributed systems where trace correlation is critical. All log methods
+// require a context.Context as the first parameter to ensure trace information is never forgotten.
+//
 // Features:
-//   - High-performance Zap core with zero-allocation hot paths
+//   - High-performance Zap core with pool-optimized hot paths
 //   - Multi-destination output (Console, File, OTEL)
 //   - Blockchain-specific field helpers (TxHash, ShardID, Slot, etc.)
-//   - Automatic trace context propagation
+//   - Automatic trace context propagation from context.Context
 //   - Pretty console output for development
 //   - File rotation via lumberjack
 //   - OpenTelemetry integration for observability
 //
 // Basic usage:
 //
+//	ctx := context.Background()
 //	logger := ion.New(ion.Default())
 //	defer logger.Sync()
 //
-//	logger.Info("server started", ion.F("port", 8080))
+//	logger.Info(ctx, "server started", ion.Int("port", 8080))
 //
 // With blockchain fields:
 //
 //	import "github.com/JupiterMetaLabs/ion/fields"
 //
-//	logger.Info("transaction routed",
+//	logger.Info(ctx, "transaction routed",
 //	    fields.TxHash("abc123"),
 //	    fields.ShardID(5),
 //	    fields.LatencyMs(12.5),
 //	)
 //
-// With context (auto-extracts trace_id):
+// Context-first design ensures trace_id and span_id are automatically extracted:
 //
-//	logger.WithContext(ctx).Info("handling request")
+//	func HandleRequest(ctx context.Context) {
+//	    // trace_id and span_id from ctx are added to logs automatically
+//	    logger.Info(ctx, "processing request")
+//	}
 package ion
 
 import (
@@ -38,29 +45,26 @@ import (
 
 // Logger is the primary logging interface.
 // All methods are safe for concurrent use.
+// All log methods require a context.Context as the first parameter for trace correlation.
 type Logger interface {
 	// Debug logs a message at debug level.
-	Debug(msg string, fields ...Field)
+	Debug(ctx context.Context, msg string, fields ...Field)
 
 	// Info logs a message at info level.
-	Info(msg string, fields ...Field)
+	Info(ctx context.Context, msg string, fields ...Field)
 
 	// Warn logs a message at warn level.
-	Warn(msg string, fields ...Field)
+	Warn(ctx context.Context, msg string, fields ...Field)
 
 	// Error logs a message at error level with an error.
-	Error(msg string, err error, fields ...Field)
+	Error(ctx context.Context, msg string, err error, fields ...Field)
 
 	// Fatal logs a message at fatal level and calls os.Exit(1).
-	Fatal(msg string, err error, fields ...Field)
+	Fatal(ctx context.Context, msg string, err error, fields ...Field)
 
 	// With returns a child logger with additional fields attached.
 	// Fields are included in all subsequent log entries.
 	With(fields ...Field) Logger
-
-	// WithContext returns a child logger that extracts trace_id, span_id,
-	// and other context values (request_id, user_id) from the context.
-	WithContext(ctx context.Context) Logger
 
 	// Named returns a named sub-logger.
 	// The name appears in logs as the "component" field.
@@ -96,7 +100,7 @@ const (
 )
 
 // Field represents a structured logging field (key-value pair).
-// It is designed to be zero-allocation for common types.
+// Field construction is zero-allocation for primitive types (String, Int, etc).
 type Field struct {
 	Key       string
 	Type      FieldType
@@ -189,28 +193,28 @@ func GetGlobal() Logger {
 }
 
 // Debug logs a message at debug level to the global logger.
-func Debug(msg string, fields ...Field) {
-	GetGlobal().Debug(msg, fields...)
+func Debug(ctx context.Context, msg string, fields ...Field) {
+	GetGlobal().Debug(ctx, msg, fields...)
 }
 
 // Info logs a message at info level to the global logger.
-func Info(msg string, fields ...Field) {
-	GetGlobal().Info(msg, fields...)
+func Info(ctx context.Context, msg string, fields ...Field) {
+	GetGlobal().Info(ctx, msg, fields...)
 }
 
 // Warn logs a message at warn level to the global logger.
-func Warn(msg string, fields ...Field) {
-	GetGlobal().Warn(msg, fields...)
+func Warn(ctx context.Context, msg string, fields ...Field) {
+	GetGlobal().Warn(ctx, msg, fields...)
 }
 
 // Error logs a message at error level to the global logger.
-func Error(msg string, err error, fields ...Field) {
-	GetGlobal().Error(msg, err, fields...)
+func Error(ctx context.Context, msg string, err error, fields ...Field) {
+	GetGlobal().Error(ctx, msg, err, fields...)
 }
 
 // Fatal logs a message at fatal level to the global logger.
-func Fatal(msg string, err error, fields ...Field) {
-	GetGlobal().Fatal(msg, err, fields...)
+func Fatal(ctx context.Context, msg string, err error, fields ...Field) {
+	GetGlobal().Fatal(ctx, msg, err, fields...)
 }
 
 // With returns a child logger from the global logger.
