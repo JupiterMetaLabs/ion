@@ -2,6 +2,7 @@ package ion
 
 import (
 	"context"
+	"fmt"
 	"log"
 
 	internalotel "github.com/JupiterMetaLabs/ion/internal/otel"
@@ -38,12 +39,38 @@ type Ion struct {
 	tracingEnabled bool
 }
 
+// Warning represents a non-fatal initialization issue.
+// Ion returns warnings instead of failing when optional components
+// (like OTEL or tracing) cannot be initialized.
+type Warning struct {
+	Component string // "otel", "tracing"
+	Err       error
+}
+
+func (w Warning) Error() string {
+	return fmt.Sprintf("%s: %v", w.Component, w.Err)
+}
+
 // New creates a new Ion instance with the given configuration.
 // This is the single entry point for creating ion observability.
 //
-// If OTEL is configured (OTEL.Endpoint set), logs are exported to OTEL collector.
-// If Tracing is enabled, traces are exported to OTEL collector.
-func New(cfg Config) (*Ion, error) {
+// Returns:
+//   - *Ion: Always returns a working Ion instance (may use fallbacks)
+//   - []Warning: Non-fatal issues (e.g., OTEL connection failed, tracing disabled)
+//   - error: Fatal configuration errors (currently always nil, reserved for future use)
+//
+// Example:
+//
+//	app, warnings, err := ion.New(cfg)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	for _, w := range warnings {
+//	    log.Printf("ion warning: %v", w)
+//	}
+func New(cfg Config) (*Ion, []Warning, error) {
+	var warnings []Warning
+
 	ion := &Ion{
 		serviceName: cfg.ServiceName,
 		version:     cfg.Version,
@@ -53,7 +80,10 @@ func New(cfg Config) (*Ion, error) {
 	if cfg.OTEL.Enabled && cfg.OTEL.Endpoint != "" {
 		logger, err := newZapLoggerWithOTEL(cfg)
 		if err != nil {
-			log.Printf("[ion] Warning: Failed to init OTEL logger: %v (using basic)", err)
+			warnings = append(warnings, Warning{
+				Component: "otel",
+				Err:       fmt.Errorf("failed to init OTEL logger: %w (using basic logger)", err),
+			})
 			ion.logger = newZapLogger(cfg)
 		} else {
 			ion.logger = logger
@@ -95,14 +125,17 @@ func New(cfg Config) (*Ion, error) {
 
 		tp, err := internalotel.SetupTracer(tracerCfg, cfg.ServiceName, cfg.Version)
 		if err != nil {
-			log.Printf("[ion] Warning: Failed to init tracing: %v (tracing disabled)", err)
+			warnings = append(warnings, Warning{
+				Component: "tracing",
+				Err:       fmt.Errorf("failed to init tracing: %w (tracing disabled)", err),
+			})
 		} else if tp != nil {
 			ion.tracerProvider = tp
 			ion.tracingEnabled = true
 		}
 	}
 
-	return ion, nil
+	return ion, warnings, nil
 }
 
 // --- Logger interface implementation ---

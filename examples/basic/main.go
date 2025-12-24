@@ -23,9 +23,12 @@ func example1_SimpleUsage() {
 	ctx := context.Background()
 
 	// Create Ion instance - one entry point for everything
-	app, err := ion.New(ion.Default().WithService("example-app"))
+	app, warnings, err := ion.New(ion.Default().WithService("example-app"))
 	if err != nil {
 		log.Fatalf("Failed to create ion: %v", err)
+	}
+	for _, w := range warnings {
+		log.Printf("ion warning: %v", w)
 	}
 	defer app.Sync()
 
@@ -43,7 +46,7 @@ func example1_SimpleUsage() {
 func example2_DependencyInjection() {
 	ctx := context.Background()
 
-	app, err := ion.New(ion.Default().WithService("payment-api"))
+	app, _, err := ion.New(ion.Default().WithService("payment-api"))
 	if err != nil {
 		log.Fatalf("Failed to create ion: %v", err)
 	}
@@ -74,7 +77,7 @@ func (s *Server) Start(ctx context.Context) {
 
 func example3_ChildLoggers() {
 	ctx := context.Background()
-	app, _ := ion.New(ion.Default())
+	app, _, _ := ion.New(ion.Default())
 
 	// Named: Adds a "logger" field to identify the component
 	httpLog := app.Named("http")
@@ -99,7 +102,7 @@ func example3_ChildLoggers() {
 func example4_GlobalUsage() {
 	ctx := context.Background()
 
-	app, _ := ion.New(ion.Default().WithService("script"))
+	app, _, _ := ion.New(ion.Default().WithService("script"))
 	ion.SetGlobal(app)
 	defer ion.Sync()
 
@@ -121,7 +124,7 @@ func example4_GlobalUsage() {
 
 func example5_BlockchainFields() {
 	ctx := context.Background()
-	app, _ := ion.New(ion.Default().WithService("mempool-router"))
+	app, _, _ := ion.New(ion.Default().WithService("mempool-router"))
 
 	app.Info(ctx, "transaction routed",
 		fields.TxHash("0xabc123..."),
@@ -177,9 +180,12 @@ func example6_ProductionSetup() {
 		},
 	}
 
-	app, err := ion.New(cfg)
+	app, warnings, err := ion.New(cfg)
 	if err != nil {
 		log.Fatalf("Failed to create ion: %v", err)
+	}
+	for _, w := range warnings {
+		log.Printf("ion warning: %v", w)
 	}
 
 	// Set as global for convenience

@@ -15,7 +15,7 @@
 // Basic usage:
 //
 //	ctx := context.Background()
-//	logger := ion.New(ion.Default())
+//	logger, warnings, _ := ion.New(ion.Default())
 //	defer logger.Sync()
 //
 //	logger.Info(ctx, "server started", ion.Int("port", 8080))
@@ -59,6 +59,10 @@ type Logger interface {
 	Error(ctx context.Context, msg string, err error, fields ...Field)
 
 	// Fatal logs a message at fatal level and calls os.Exit(1).
+	//
+	// IMPORTANT: Fatal attempts to flush logs and shutdown OTEL before exiting,
+	// but some logs may be lost if buffers are full. For graceful shutdown,
+	// prefer returning errors and calling Shutdown() explicitly.
 	Fatal(ctx context.Context, msg string, err error, fields ...Field)
 
 	// With returns a child logger with additional fields attached.

@@ -67,7 +67,7 @@
 //	cfg.OTEL.Enabled = true
 //	cfg.OTEL.Endpoint = "otel-collector:4317"
 //
-//	logger := ion.New(cfg)
+//	logger, warnings, err := ion.New(cfg)
 //
 // Environment variables supported by [InitFromEnv]:
 //

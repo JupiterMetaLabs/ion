@@ -9,7 +9,7 @@ import (
 
 func TestIon_New(t *testing.T) {
 	ctx := context.Background()
-	app, err := New(Default())
+	app, _, err := New(Default())
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestIon_Tracer(t *testing.T) {
 	ctx := context.Background()
 	cfg := Default()
 	cfg.Tracing.Enabled = true
-	app, err := New(cfg)
+	app, _, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New() error: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestIon_Tracer(t *testing.T) {
 
 func TestIon_ChildLogger(t *testing.T) {
 	ctx := context.Background()
-	app, _ := New(Default())
+	app, _, _ := New(Default())
 	defer app.Shutdown(ctx)
 
 	// Named child
@@ -68,7 +68,7 @@ func TestIon_ChildLogger(t *testing.T) {
 
 func TestIon_SetLevel(t *testing.T) {
 	ctx := context.Background()
-	app, _ := New(Default())
+	app, _, _ := New(Default())
 	defer app.Shutdown(ctx)
 
 	// Default level is info
@@ -85,7 +85,7 @@ func TestIon_SetLevel(t *testing.T) {
 
 func TestIon_Shutdown(t *testing.T) {
 	ctx := context.Background()
-	app, _ := New(Default())
+	app, _, _ := New(Default())
 
 	// Should not error
 	if err := app.Shutdown(ctx); err != nil {
@@ -95,7 +95,7 @@ func TestIon_Shutdown(t *testing.T) {
 
 func TestGlobal_SetAndGet(t *testing.T) {
 	ctx := context.Background()
-	app, _ := New(Default().WithService("test-global"))
+	app, _, _ := New(Default().WithService("test-global"))
 	SetGlobal(app)
 	defer app.Shutdown(ctx)
 
