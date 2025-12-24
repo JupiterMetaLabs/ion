@@ -76,27 +76,34 @@ func newZapLoggerWithOTEL(cfg Config) (Logger, error) {
 
 // buildLogger constructs the zapLogger with all configured cores.
 // If otelCore is non-nil, it's added to the core tee.
+//
+// Filtering strategy for clean trace correlation:
+// - Console/File: filter "ctx" (shows ugly {}), keep trace_id/span_id strings
+// - OTEL: filter trace_id/span_id strings (redundant), keep "ctx" for LogRecord correlation
 func buildLogger(cfg Config, otelCore zapcore.Core, otelProvider *otel.Provider) Logger {
 	atomicLevel := zap.NewAtomicLevelAt(parseLevel(cfg.Level))
 	cores := make([]zapcore.Core, 0, 4)
 
-	// Console output
+	// Console output - filter "ctx" field (otelzap artifact, not readable)
 	if cfg.Console.Enabled {
 		consoleCores := buildConsoleCores(cfg, atomicLevel)
-		cores = append(cores, consoleCores...)
-	}
-
-	// File output (with rotation)
-	if cfg.File.Enabled && cfg.File.Path != "" {
-		fileCore := buildFileCore(cfg, atomicLevel)
-		if fileCore != nil {
-			cores = append(cores, fileCore)
+		for _, c := range consoleCores {
+			cores = append(cores, newFilteringCore(c, "ctx"))
 		}
 	}
 
-	// OTEL core (if provided)
+	// File output - same filtering as console
+	if cfg.File.Enabled && cfg.File.Path != "" {
+		fileCore := buildFileCore(cfg, atomicLevel)
+		if fileCore != nil {
+			cores = append(cores, newFilteringCore(fileCore, "ctx"))
+		}
+	}
+
+	// OTEL core - filter trace_id/span_id strings (redundant, LogRecord has them)
+	// Keep "ctx" so otelzap bridge can extract trace context for LogRecord.TraceID
 	if otelCore != nil {
-		cores = append(cores, otelCore)
+		cores = append(cores, newFilteringCore(otelCore, "trace_id", "span_id"))
 	}
 
 	// Combine all cores
@@ -237,19 +244,30 @@ type zapLogFunc func(msg string, fields ...zap.Field)
 // logWithFields is a helper that consolidates the common pattern of:
 // 1. Converting ion.Field to zap.Field (with pooling)
 // 2. Extracting context fields (trace_id, span_id, etc.)
-// 3. Calling the appropriate zap log method
-// 4. Returning the pooled slice
+// 3. Adding ctx for OTEL LogRecord trace correlation
+// 4. Calling the appropriate zap log method
+// 5. Returning the pooled slice
+//
+// Trace correlation strategy:
+// - ctx is passed as zap.Reflect for otelzap bridge to extract LogRecord.TraceID
+// - trace_id/span_id strings are added for console/file readability
+// - filtercore strips ctx from console (ugly), strips strings from OTEL (redundant)
 //
 // Performance optimization: We skip context extraction for context.Background()
-// since it can never contain trace information, saving one allocation for
-// startup/shutdown logs.
+// since it can never contain trace information.
 func (l *zapLogger) logWithFields(ctx context.Context, logFn zapLogFunc, msg string, fields []Field) {
 	zapFields := toZapFieldsTransient(fields)
 
 	// Short-circuit: context.Background() and context.TODO() never have trace info
 	var contextZapFields []zap.Field
-	if ctx != nil && ctx != context.Background() && ctx != context.TODO() {
+	hasTraceContext := ctx != nil && ctx != context.Background() && ctx != context.TODO()
+
+	if hasTraceContext {
+		// Extract readable trace_id/span_id strings for console/file
 		contextZapFields = extractContextZapFields(ctx)
+		// Add ctx for otelzap bridge to extract LogRecord.TraceID/SpanID
+		// filtercore strips this from console (shows {}) but OTEL uses it
+		contextZapFields = append(contextZapFields, zap.Reflect("ctx", ctx))
 	}
 
 	if zapFields != nil {
@@ -298,6 +316,12 @@ func (l *zapLogger) Error(ctx context.Context, msg string, err error, fields ...
 	zapFields := toZapFieldsTransient(fields)
 	contextZapFields := extractContextZapFields(ctx)
 
+	// Add ctx for otelzap bridge trace correlation
+	hasTraceContext := ctx != nil && ctx != context.Background() && ctx != context.TODO()
+	if hasTraceContext {
+		contextZapFields = append(contextZapFields, zap.Reflect("ctx", ctx))
+	}
+
 	if zapFields == nil {
 		var allFields []zap.Field
 		if err != nil {
@@ -323,6 +347,12 @@ func (l *zapLogger) Fatal(ctx context.Context, msg string, err error, fields ...
 	// Use allocating conversion since os.Exit prevents pool cleanup
 	zapFields := toZapFields(fields)
 	contextZapFields := extractContextZapFields(ctx)
+
+	// Add ctx for otelzap bridge trace correlation
+	hasTraceContext := ctx != nil && ctx != context.Background() && ctx != context.TODO()
+	if hasTraceContext {
+		contextZapFields = append(contextZapFields, zap.Reflect("ctx", ctx))
+	}
 
 	var allFields []zap.Field
 	if err != nil {

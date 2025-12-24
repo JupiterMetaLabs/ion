@@ -1,7 +1,7 @@
 // filtercore.go provides a zapcore.Core wrapper that filters specific fields.
-// It was designed to strip internal fields (like "context") from console output
-// while preserving them for OTEL export. Currently unused but retained for
-// future use or custom core configurations.
+// Used for trace correlation:
+// - Console/File: filters "ctx" field (ugly {} output from zap.Reflect)
+// - OTEL: filters "trace_id"/"span_id" strings (redundant, LogRecord has them)
 package ion
 
 import "go.uber.org/zap/zapcore"
