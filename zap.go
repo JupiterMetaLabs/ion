@@ -266,16 +266,25 @@ func (l *zapLogger) logWithFields(ctx context.Context, logFn zapLogFunc, msg str
 
 // Debug logs a message at debug level.
 func (l *zapLogger) Debug(ctx context.Context, msg string, fields ...Field) {
+	if !l.atomicLvl.Enabled(zapcore.DebugLevel) {
+		return // Zero allocation for filtered levels
+	}
 	l.logWithFields(ctx, l.zap.Debug, msg, fields)
 }
 
 // Info logs a message at info level.
 func (l *zapLogger) Info(ctx context.Context, msg string, fields ...Field) {
+	if !l.atomicLvl.Enabled(zapcore.InfoLevel) {
+		return
+	}
 	l.logWithFields(ctx, l.zap.Info, msg, fields)
 }
 
 // Warn logs a message at warn level.
 func (l *zapLogger) Warn(ctx context.Context, msg string, fields ...Field) {
+	if !l.atomicLvl.Enabled(zapcore.WarnLevel) {
+		return
+	}
 	l.logWithFields(ctx, l.zap.Warn, msg, fields)
 }
 
@@ -379,9 +388,31 @@ var zapFieldPool = sync.Pool{
 	},
 }
 
+// convertField converts a single ion.Field to zap.Field.
+// Shared by both pooled and allocating conversion paths.
+func convertField(f Field) zap.Field {
+	switch f.Type {
+	case StringType:
+		return zap.String(f.Key, f.StringVal)
+	case Int64Type:
+		return zap.Int64(f.Key, f.Integer)
+	case Float64Type:
+		return zap.Float64(f.Key, f.Float)
+	case BoolType:
+		return zap.Bool(f.Key, f.Integer == 1)
+	case ErrorType:
+		if err, ok := f.Interface.(error); ok {
+			return zap.Error(err)
+		}
+		return zap.Any(f.Key, f.Interface)
+	default:
+		return zap.Any(f.Key, f.Interface)
+	}
+}
+
 // toZapFieldsTransient converts ion.Field slice to a pooled zap.Field slice.
 // The caller MUST return the slice to the pool using putZapFields.
-// safe for Info/Debug/Error, NOT safe for With/Named.
+// Safe for Info/Debug/Error, NOT safe for With/Named.
 func toZapFieldsTransient(fields []Field) *[]zap.Field {
 	if len(fields) == 0 {
 		return nil
@@ -391,25 +422,7 @@ func toZapFieldsTransient(fields []Field) *[]zap.Field {
 	*ptr = (*ptr)[:0]
 
 	for _, f := range fields {
-		switch f.Type {
-		case StringType:
-			*ptr = append(*ptr, zap.String(f.Key, f.StringVal))
-		case Int64Type:
-			*ptr = append(*ptr, zap.Int64(f.Key, f.Integer))
-		case Float64Type:
-			*ptr = append(*ptr, zap.Float64(f.Key, f.Float))
-		case BoolType:
-			*ptr = append(*ptr, zap.Bool(f.Key, f.Integer == 1))
-		case ErrorType:
-			// Ensure Interface is actually an error to avoid panic, though Err constructor ensures it
-			if err, ok := f.Interface.(error); ok {
-				*ptr = append(*ptr, zap.Error(err))
-			} else {
-				*ptr = append(*ptr, zap.Any(f.Key, f.Interface))
-			}
-		default:
-			*ptr = append(*ptr, zap.Any(f.Key, f.Interface))
-		}
+		*ptr = append(*ptr, convertField(f))
 	}
 	return ptr
 }
@@ -419,11 +432,7 @@ func putZapFields(ptr *[]zap.Field) {
 	if ptr == nil {
 		return
 	}
-	// Clear slice references to prevent memory leaks (if values held pointers)
-	// Although zap.Field is strict, zap.Any depends on the usage.
-	// For high-perf pool, we validly just reset length, but better to be safe?
-	// Resetting length is enough for the slice, but the array might hold refs.
-	// Given we overwrite on Get, it's mostly fine.
+	// Reset length - underlying array may hold refs but they're overwritten on Get
 	*ptr = (*ptr)[:0]
 	zapFieldPool.Put(ptr)
 }
@@ -437,24 +446,7 @@ func toZapFields(fields []Field) []zap.Field {
 
 	zapFields := make([]zap.Field, 0, len(fields))
 	for _, f := range fields {
-		switch f.Type {
-		case StringType:
-			zapFields = append(zapFields, zap.String(f.Key, f.StringVal))
-		case Int64Type:
-			zapFields = append(zapFields, zap.Int64(f.Key, f.Integer))
-		case Float64Type:
-			zapFields = append(zapFields, zap.Float64(f.Key, f.Float))
-		case BoolType:
-			zapFields = append(zapFields, zap.Bool(f.Key, f.Integer == 1))
-		case ErrorType:
-			if err, ok := f.Interface.(error); ok {
-				zapFields = append(zapFields, zap.Error(err))
-			} else {
-				zapFields = append(zapFields, zap.Any(f.Key, f.Interface))
-			}
-		default:
-			zapFields = append(zapFields, zap.Any(f.Key, f.Interface))
-		}
+		zapFields = append(zapFields, convertField(f))
 	}
 	return zapFields
 }

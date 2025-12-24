@@ -1,3 +1,9 @@
+// Package ion context helpers provide functions for propagating trace, request,
+// and user IDs through context.Context. These values are automatically extracted
+// and included in log entries.
+//
+// For OTEL tracing, trace_id and span_id are automatically extracted from the
+// span context. For non-OTEL scenarios, use WithTraceID to set manually.
 package ion
 
 import (

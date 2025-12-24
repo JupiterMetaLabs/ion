@@ -6,8 +6,10 @@ import (
 )
 
 var (
-	globalMu sync.RWMutex
-	global   *Ion
+	globalMu     sync.RWMutex
+	global       *Ion
+	fallbackOnce sync.Once
+	fallbackIon  *Ion
 )
 
 // SetGlobal sets the global Ion instance.
@@ -18,6 +20,7 @@ func SetGlobal(ion *Ion) {
 }
 
 // L returns the global Ion instance.
+// Panics if SetGlobal has not been called.
 func L() *Ion {
 	globalMu.RLock()
 	g := global
@@ -28,14 +31,20 @@ func L() *Ion {
 	return g
 }
 
+// getGlobal returns the global Ion or a thread-safe fallback.
+// Uses sync.Once to create fallback only once, preventing race conditions.
 func getGlobal() *Ion {
 	globalMu.RLock()
 	g := global
 	globalMu.RUnlock()
-	if g == nil {
-		return &Ion{logger: newZapLogger(Default())}
+	if g != nil {
+		return g
 	}
-	return g
+	// Create fallback only once to prevent allocation on every call
+	fallbackOnce.Do(func() {
+		fallbackIon = &Ion{logger: newZapLogger(Default())}
+	})
+	return fallbackIon
 }
 
 // Debug logs at debug level using global logger.

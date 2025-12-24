@@ -48,7 +48,9 @@ func Setup(cfg Config, serviceName, version string) (*Provider, error) {
 		return nil, nil
 	}
 
-	ctx := context.Background()
+	// Use timeout to prevent hanging indefinitely on exporter creation
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	// Build resource attributes
 	attrs := []attribute.KeyValue{
