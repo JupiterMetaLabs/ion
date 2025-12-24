@@ -406,6 +406,8 @@ func convertField(f Field) zap.Field {
 		return zap.String(f.Key, f.StringVal)
 	case Int64Type:
 		return zap.Int64(f.Key, f.Integer)
+	case Uint64Type:
+		return zap.Uint64(f.Key, f.Interface.(uint64))
 	case Float64Type:
 		return zap.Float64(f.Key, f.Float)
 	case BoolType:

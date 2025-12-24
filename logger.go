@@ -92,6 +92,7 @@ const (
 	UnknownType FieldType = iota
 	StringType
 	Int64Type
+	Uint64Type
 	Float64Type
 	BoolType
 	ErrorType
@@ -143,6 +144,12 @@ func Int(key string, value int) Field {
 // Int64 creates an int64 field.
 func Int64(key string, value int64) Field {
 	return Field{Key: key, Type: Int64Type, Integer: value}
+}
+
+// Uint64 creates a uint64 field without truncation.
+// Use this for large unsigned values (e.g., block heights, slots).
+func Uint64(key string, value uint64) Field {
+	return Field{Key: key, Type: Uint64Type, Interface: value}
 }
 
 // Float64 creates a float64 field.
