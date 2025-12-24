@@ -1,7 +1,10 @@
 // filtercore.go provides a zapcore.Core wrapper that filters specific fields.
-// Used for trace correlation:
-// - Console/File: filters "ctx" field (ugly {} output from zap.Reflect)
-// - OTEL: filters "trace_id"/"span_id" strings (redundant, LogRecord has them)
+//
+// Used for trace correlation with collision avoidance:
+// - Console/File: filters sentinel key "__ion_ctx__" (ugly {} output from zap.Reflect)
+// - OTEL: filters "trace_id"/"span_id" strings (redundant, LogRecord has them via bridge)
+//
+// The sentinel key prevents accidental collision with user-defined field names.
 package ion
 
 import "go.uber.org/zap/zapcore"

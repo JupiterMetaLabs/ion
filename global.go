@@ -67,9 +67,10 @@ func Error(ctx context.Context, msg string, err error, fields ...Field) {
 	getGlobal().Error(ctx, msg, err, fields...)
 }
 
-// Fatal logs at fatal level using global logger.
-func Fatal(ctx context.Context, msg string, err error, fields ...Field) {
-	getGlobal().Fatal(ctx, msg, err, fields...)
+// Critical logs at critical level using global logger.
+// Does NOT exit the process - caller decides what to do.
+func Critical(ctx context.Context, msg string, err error, fields ...Field) {
+	getGlobal().Critical(ctx, msg, err, fields...)
 }
 
 // GetTracer returns a named tracer from global Ion.

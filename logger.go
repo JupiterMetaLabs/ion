@@ -58,12 +58,16 @@ type Logger interface {
 	// Error logs a message at error level with an error.
 	Error(ctx context.Context, msg string, err error, fields ...Field)
 
-	// Fatal logs a message at fatal level and calls os.Exit(1).
+	// Critical logs a message at the highest severity level but does NOT exit.
 	//
-	// IMPORTANT: Fatal attempts to flush logs and shutdown OTEL before exiting,
-	// but some logs may be lost if buffers are full. For graceful shutdown,
-	// prefer returning errors and calling Shutdown() explicitly.
-	Fatal(ctx context.Context, msg string, err error, fields ...Field)
+	// Unlike the old Fatal method, Critical leaves process lifecycle control
+	// to the caller. Shared infrastructure libraries must never call os.Exit -
+	// only main() should decide when to terminate the process.
+	//
+	// Usage pattern:
+	//   logger.Critical(ctx, "unrecoverable error", err)
+	//   return err  // Let caller decide how to handle
+	Critical(ctx context.Context, msg string, err error, fields ...Field)
 
 	// With returns a child logger with additional fields attached.
 	// Fields are included in all subsequent log entries.

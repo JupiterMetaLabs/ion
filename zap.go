@@ -3,17 +3,21 @@ package ion
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
-	"sync"
-	"time"
 
 	"github.com/JupiterMetaLabs/ion/internal/otel"
 	"go.opentelemetry.io/contrib/bridges/otelzap"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+// _ctxFieldKey is a sentinel key for passing context to the otelzap bridge.
+// This internal key is filtered by filtercore to avoid collision with user fields
+// and prevent ugly {} output on console.
+const _ctxFieldKey = "__ion_ctx__"
 
 // zapLogger implements Logger using Uber's Zap.
 type zapLogger struct {
@@ -78,17 +82,17 @@ func newZapLoggerWithOTEL(cfg Config) (Logger, error) {
 // If otelCore is non-nil, it's added to the core tee.
 //
 // Filtering strategy for clean trace correlation:
-// - Console/File: filter "ctx" (shows ugly {}), keep trace_id/span_id strings
-// - OTEL: filter trace_id/span_id strings (redundant), keep "ctx" for LogRecord correlation
+// - Console/File: filter sentinel key (shows ugly {}), keep trace_id/span_id strings
+// - OTEL: filter trace_id/span_id strings (redundant), keep sentinel for LogRecord
 func buildLogger(cfg Config, otelCore zapcore.Core, otelProvider *otel.Provider) Logger {
 	atomicLevel := zap.NewAtomicLevelAt(parseLevel(cfg.Level))
 	cores := make([]zapcore.Core, 0, 4)
 
-	// Console output - filter "ctx" field (otelzap artifact, not readable)
+	// Console output - filter sentinel key (otelzap artifact, not readable)
 	if cfg.Console.Enabled {
 		consoleCores := buildConsoleCores(cfg, atomicLevel)
 		for _, c := range consoleCores {
-			cores = append(cores, newFilteringCore(c, "ctx"))
+			cores = append(cores, newFilteringCore(c, _ctxFieldKey))
 		}
 	}
 
@@ -96,12 +100,12 @@ func buildLogger(cfg Config, otelCore zapcore.Core, otelProvider *otel.Provider)
 	if cfg.File.Enabled && cfg.File.Path != "" {
 		fileCore := buildFileCore(cfg, atomicLevel)
 		if fileCore != nil {
-			cores = append(cores, newFilteringCore(fileCore, "ctx"))
+			cores = append(cores, newFilteringCore(fileCore, _ctxFieldKey))
 		}
 	}
 
-	// OTEL core - filter trace_id/span_id strings (redundant, LogRecord has them)
-	// Keep "ctx" so otelzap bridge can extract trace context for LogRecord.TraceID
+	// OTEL core - filter trace_id/span_id strings (redundant, LogRecord has them via bridge)
+	// Keep sentinel key so otelzap bridge can extract trace context for LogRecord.TraceID
 	if otelCore != nil {
 		cores = append(cores, newFilteringCore(otelCore, "trace_id", "span_id"))
 	}
@@ -242,42 +246,35 @@ func parseLevel(level string) zapcore.Level {
 type zapLogFunc func(msg string, fields ...zap.Field)
 
 // logWithFields is a helper that consolidates the common pattern of:
-// 1. Converting ion.Field to zap.Field (with pooling)
+// 1. Converting ion.Field to zap.Field
 // 2. Extracting context fields (trace_id, span_id, etc.)
 // 3. Adding ctx for OTEL LogRecord trace correlation
 // 4. Calling the appropriate zap log method
-// 5. Returning the pooled slice
 //
 // Trace correlation strategy:
 // - ctx is passed as zap.Reflect for otelzap bridge to extract LogRecord.TraceID
 // - trace_id/span_id strings are added for console/file readability
 // - filtercore strips ctx from console (ugly), strips strings from OTEL (redundant)
 //
-// Performance optimization: We skip context extraction for context.Background()
-// since it can never contain trace information.
+// Note: We use allocating field conversion (not pooling) because zap fields may be
+// encoded asynchronously by cores/exporters. Pooling risks corrupted logs.
 func (l *zapLogger) logWithFields(ctx context.Context, logFn zapLogFunc, msg string, fields []Field) {
-	zapFields := toZapFieldsTransient(fields)
+	zapFields := toZapFields(fields)
 
 	// Short-circuit: context.Background() and context.TODO() never have trace info
-	var contextZapFields []zap.Field
 	hasTraceContext := ctx != nil && ctx != context.Background() && ctx != context.TODO()
 
 	if hasTraceContext {
 		// Extract readable trace_id/span_id strings for console/file
-		contextZapFields = extractContextZapFields(ctx)
+		contextFields := extractContextZapFields(ctx)
 		// Add ctx for otelzap bridge to extract LogRecord.TraceID/SpanID
-		// filtercore strips this from console (shows {}) but OTEL uses it
-		contextZapFields = append(contextZapFields, zap.Reflect("ctx", ctx))
+		// filtercore strips this from console but OTEL uses it
+		contextFields = append(contextFields, zap.Reflect(_ctxFieldKey, ctx))
+		zapFields = append(zapFields, contextFields...)
 	}
 
-	if zapFields != nil {
-		if len(contextZapFields) > 0 {
-			*zapFields = append(*zapFields, contextZapFields...)
-		}
-		logFn(msg, *zapFields...)
-		putZapFields(zapFields)
-	} else if len(contextZapFields) > 0 {
-		logFn(msg, contextZapFields...)
+	if len(zapFields) > 0 {
+		logFn(msg, zapFields...)
 	} else {
 		logFn(msg)
 	}
@@ -313,65 +310,51 @@ func (l *zapLogger) Error(ctx context.Context, msg string, err error, fields ...
 		return
 	}
 
-	zapFields := toZapFieldsTransient(fields)
-	contextZapFields := extractContextZapFields(ctx)
+	zapFields := toZapFields(fields)
 
-	// Add ctx for otelzap bridge trace correlation
+	// Add error field
+	if err != nil {
+		zapFields = append(zapFields, zap.Error(err))
+	}
+
+	// Add trace context if present
 	hasTraceContext := ctx != nil && ctx != context.Background() && ctx != context.TODO()
 	if hasTraceContext {
-		contextZapFields = append(contextZapFields, zap.Reflect("ctx", ctx))
+		contextFields := extractContextZapFields(ctx)
+		contextFields = append(contextFields, zap.Reflect(_ctxFieldKey, ctx))
+		zapFields = append(zapFields, contextFields...)
 	}
 
-	if zapFields == nil {
-		var allFields []zap.Field
-		if err != nil {
-			allFields = append(allFields, zap.Error(err))
-		}
-		allFields = append(allFields, contextZapFields...)
-		l.zap.Error(msg, allFields...)
-		return
-	}
-
-	if err != nil {
-		*zapFields = append(*zapFields, zap.Error(err))
-	}
-	*zapFields = append(*zapFields, contextZapFields...)
-	l.zap.Error(msg, *zapFields...)
-	putZapFields(zapFields)
+	l.zap.Error(msg, zapFields...)
 }
 
-// Fatal logs a message at fatal level and calls os.Exit(1).
-// Note: This method syncs the logger before exiting to ensure logs are flushed.
-// Pool cleanup is skipped since the process exits immediately.
-func (l *zapLogger) Fatal(ctx context.Context, msg string, err error, fields ...Field) {
-	// Use allocating conversion since os.Exit prevents pool cleanup
+// Critical logs a message at fatal level but does NOT exit the process.
+//
+// Unlike Fatal, this method logs at the highest severity (fatal level) but
+// leaves process lifecycle control to the caller. Shared infrastructure
+// libraries must never call os.Exit - only main() should decide when to exit.
+//
+// For graceful shutdown after a critical error, return the error up the
+// call stack and call app.Shutdown() explicitly.
+func (l *zapLogger) Critical(ctx context.Context, msg string, err error, fields ...Field) {
 	zapFields := toZapFields(fields)
-	contextZapFields := extractContextZapFields(ctx)
 
-	// Add ctx for otelzap bridge trace correlation
+	// Add error field
+	if err != nil {
+		zapFields = append(zapFields, zap.Error(err))
+	}
+
+	// Add trace context if present
 	hasTraceContext := ctx != nil && ctx != context.Background() && ctx != context.TODO()
 	if hasTraceContext {
-		contextZapFields = append(contextZapFields, zap.Reflect("ctx", ctx))
+		contextFields := extractContextZapFields(ctx)
+		contextFields = append(contextFields, zap.Reflect(_ctxFieldKey, ctx))
+		zapFields = append(zapFields, contextFields...)
 	}
 
-	var allFields []zap.Field
-	if err != nil {
-		allFields = append(allFields, zap.Error(err))
-	}
-	allFields = append(allFields, zapFields...)
-	allFields = append(allFields, contextZapFields...)
-
-	// Sync before Fatal to flush buffered logs
-	_ = l.zap.Sync()
-
-	// Shutdown OTEL provider to flush traces (best effort)
-	if l.otelProvider != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = l.otelProvider.Shutdown(ctx)
-		cancel()
-	}
-
-	l.zap.Fatal(msg, allFields...)
+	// Log at fatal level severity but using DPanic (which doesn't exit in production)
+	// This gives fatal-level visibility for alerting without process termination
+	l.zap.DPanic(msg, zapFields...)
 }
 
 func (l *zapLogger) With(fields ...Field) Logger {
@@ -397,14 +380,21 @@ func (l *zapLogger) Sync() error {
 }
 
 func (l *zapLogger) Shutdown(ctx context.Context) error {
+	var errs []error
+
 	// Sync Zap first
-	_ = l.zap.Sync()
+	if err := l.zap.Sync(); err != nil {
+		errs = append(errs, fmt.Errorf("zap sync: %w", err))
+	}
 
 	// Shutdown OTEL if present
 	if l.otelProvider != nil {
-		return l.otelProvider.Shutdown(ctx)
+		if err := l.otelProvider.Shutdown(ctx); err != nil {
+			errs = append(errs, fmt.Errorf("otel: %w", err))
+		}
 	}
-	return nil
+
+	return errors.Join(errs...)
 }
 
 // SetLevel changes the log level at runtime.
@@ -420,16 +410,7 @@ func (l *zapLogger) GetLevel() string {
 
 // --- Field conversion ---
 
-var zapFieldPool = sync.Pool{
-	New: func() any {
-		// Default cap 16 covers most use cases
-		slice := make([]zap.Field, 0, 16)
-		return &slice
-	},
-}
-
 // convertField converts a single ion.Field to zap.Field.
-// Shared by both pooled and allocating conversion paths.
 func convertField(f Field) zap.Field {
 	switch f.Type {
 	case StringType:
@@ -450,33 +431,6 @@ func convertField(f Field) zap.Field {
 	default:
 		return zap.Any(f.Key, f.Interface)
 	}
-}
-
-// toZapFieldsTransient converts ion.Field slice to a pooled zap.Field slice.
-// The caller MUST return the slice to the pool using putZapFields.
-// Safe for Info/Debug/Error, NOT safe for With/Named.
-func toZapFieldsTransient(fields []Field) *[]zap.Field {
-	if len(fields) == 0 {
-		return nil
-	}
-
-	ptr := zapFieldPool.Get().(*[]zap.Field)
-	*ptr = (*ptr)[:0]
-
-	for _, f := range fields {
-		*ptr = append(*ptr, convertField(f))
-	}
-	return ptr
-}
-
-// putZapFields cleans up the slice and returns it to the pool.
-func putZapFields(ptr *[]zap.Field) {
-	if ptr == nil {
-		return
-	}
-	// Reset length - underlying array may hold refs but they're overwritten on Get
-	*ptr = (*ptr)[:0]
-	zapFieldPool.Put(ptr)
 }
 
 // toZapFields converts ion.Field slice to zap.Field slice (allocating).

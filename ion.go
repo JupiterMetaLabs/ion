@@ -156,8 +156,8 @@ func (i *Ion) Error(ctx context.Context, msg string, err error, fields ...Field)
 	i.logger.Error(ctx, msg, err, fields...)
 }
 
-func (i *Ion) Fatal(ctx context.Context, msg string, err error, fields ...Field) {
-	i.logger.Fatal(ctx, msg, err, fields...)
+func (i *Ion) Critical(ctx context.Context, msg string, err error, fields ...Field) {
+	i.logger.Critical(ctx, msg, err, fields...)
 }
 
 func (i *Ion) With(fields ...Field) Logger {

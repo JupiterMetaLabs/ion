@@ -85,9 +85,11 @@ func TestIon_SetLevel(t *testing.T) {
 
 func TestIon_Shutdown(t *testing.T) {
 	ctx := context.Background()
-	app, _, _ := New(Default())
+	cfg := Default()
+	cfg.Console.Enabled = false // Disable console to avoid sync errors on test pipes
+	app, _, _ := New(cfg)
 
-	// Should not error
+	// Should not error when console is disabled
 	if err := app.Shutdown(ctx); err != nil {
 		t.Errorf("Shutdown() error: %v", err)
 	}

@@ -1,0 +1,416 @@
+# Ion Engineering Document
+
+> **Purpose**: Technical reference for AI agents and developers working on or integrating with the ion observability library.
+
+---
+
+## 1. Project Overview
+
+**Ion** is an enterprise-grade structured logging and tracing library for Go, designed for JupiterMeta blockchain services.
+
+### 1.1 Goals
+
+1. **Unified Observability** - Single entry point (`ion.New()`) for logs + traces
+2. **Zero-Cost When Disabled** - Filtered logs (debug when level=info) cost ~2ns, 0 allocs
+3. **Context-First API** - All methods require `context.Context` for automatic trace correlation
+4. **OTEL Native** - First-class OpenTelemetry integration for logs and traces
+5. **Pool-Optimized** - Sync.Pool for field slices reduces allocations
+6. **Blockchain Domain** - Specialized field helpers (TxHash, BlockHeight, Slot, etc.)
+
+### 1.2 Non-Goals
+
+- Metrics (future consideration)
+- Sampling (backlog)
+- Custom encoders
+
+---
+
+## 2. Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         ion.New(cfg)                            │
+│                              │                                  │
+│                              ▼                                  │
+│                         Ion struct                              │
+│                    (implements Logger)                          │
+│                              │                                  │
+│              ┌───────────────┼───────────────┐                  │
+│              ▼               ▼               ▼                  │
+│         zapLogger      TracerProvider    OTELProvider           │
+│              │               │               │                  │
+│              ▼               ▼               ▼                  │
+│         ┌────────────────────────────────────────┐              │
+│         │              Core Tee                  │              │
+│         │  ┌─────────┐ ┌─────────┐ ┌──────────┐  │              │
+│         │  │Console  │ │  File   │ │   OTEL   │  │              │
+│         │  │(filter  │ │(filter  │ │(filter   │  │              │
+│         │  │  ctx)   │ │  ctx)   │ │trace_id) │  │              │
+│         │  └─────────┘ └─────────┘ └──────────┘  │              │
+│         └────────────────────────────────────────┘              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 2.1 Key Files
+
+| File | Purpose | LOC |
+|------|---------|-----|
+| [ion.go](file:///Users/naman/JM/repos/ion/ion.go) | Entry point, Ion struct, New() | ~220 |
+| [zap.go](file:///Users/naman/JM/repos/ion/zap.go) | zapLogger implementation, field pooling | ~480 |
+| [logger.go](file:///Users/naman/JM/repos/ion/logger.go) | Logger interface, Field types | ~180 |
+| [config.go](file:///Users/naman/JM/repos/ion/config.go) | Config structs, Validate(), builders | ~310 |
+| [context.go](file:///Users/naman/JM/repos/ion/context.go) | Context helpers (WithRequestID, extract trace) | ~110 |
+| [filtercore.go](file:///Users/naman/JM/repos/ion/filtercore.go) | zapcore.Core wrapper for field filtering | ~55 |
+| [global.go](file:///Users/naman/JM/repos/ion/global.go) | Global logger pattern (SetGlobal, L, Info) | ~80 |
+| [tracer.go](file:///Users/naman/JM/repos/ion/tracer.go) | Tracer/Span interfaces, OTEL + noop impls | ~180 |
+| `internal/otel/` | OTEL provider + tracer setup | ~370 |
+| `fields/blockchain.go` | Domain-specific field helpers | ~245 |
+| `middleware/` | HTTP + gRPC instrumentation wrappers | ~120 |
+
+---
+
+## 3. API Design
+
+### 3.1 Entry Point
+
+```go
+// Single unified constructor
+app, warnings, err := ion.New(cfg)
+if err != nil {
+    log.Fatal(err)
+}
+for _, w := range warnings {
+    log.Printf("ion warning: %v", w)  // Non-fatal issues
+}
+defer app.Shutdown(ctx)
+```
+
+### 3.2 Logger Interface
+
+```go
+type Logger interface {
+    Debug(ctx context.Context, msg string, fields ...Field)
+    Info(ctx context.Context, msg string, fields ...Field)
+    Warn(ctx context.Context, msg string, fields ...Field)
+    Error(ctx context.Context, msg string, err error, fields ...Field)
+    Fatal(ctx context.Context, msg string, err error, fields ...Field)
+    
+    With(fields ...Field) Logger   // Child with permanent fields
+    Named(name string) Logger      // Child with component name
+    
+    Sync() error
+    Shutdown(ctx context.Context) error
+    SetLevel(level string)
+    GetLevel() string
+}
+```
+
+### 3.3 Field Creation
+
+```go
+// Type-specific (zero boxing)
+ion.String("key", "value")
+ion.Int("key", 42)
+ion.Int64("key", int64(n))
+ion.Uint64("key", uint64(n))  // No truncation for large values
+ion.Float64("key", 3.14)
+ion.Bool("key", true)
+ion.Err(err)
+
+// Polymorphic (convenience, 1 alloc for interface boxing)
+ion.F("key", anyValue)
+
+// Domain-specific (fields package)
+fields.TxHash("0x...")
+fields.BlockHeight(18_500_000)
+fields.Slot(250_000_000)
+fields.LatencyMs(42.5)
+```
+
+### 3.4 Tracing
+
+```go
+tracer := app.Tracer("component.name")
+ctx, span := tracer.Start(ctx, "OperationName",
+    ion.WithAttributes(attribute.String("key", "value")),
+)
+defer span.End()
+
+// Logs within this context automatically include trace_id, span_id
+app.Info(ctx, "processing", ion.String("status", "ok"))
+```
+
+---
+
+## 4. Implementation Details
+
+### 4.1 Trace Correlation Strategy
+
+**Problem**: OTEL logs need `LogRecord.TraceID` (not attributes), console needs readable strings.
+
+**Solution**: filtercore
+
+```
+┌──────────────────────────────────────────────┐
+│  Log call adds:                              │
+│  - trace_id: "abc" (string)                  │
+│  - span_id: "123" (string)                   │
+│  - ctx: context.Context (for otelzap)        │
+└──────────────────────────────────────────────┘
+                    │
+      ┌─────────────┴─────────────┐
+      ▼                           ▼
+┌──────────────┐          ┌──────────────┐
+│ Console/File │          │     OTEL     │
+│ filter("ctx")│          │filter(trace) │
+│              │          │              │
+│ OUTPUT:      │          │ OUTPUT:      │
+│ trace_id:abc │          │ LogRecord:   │
+│ span_id:123  │          │  TraceID:abc │
+└──────────────┘          └──────────────┘
+```
+
+### 4.2 Field Pooling
+
+```go
+var zapFieldPool = sync.Pool{
+    New: func() any {
+        slice := make([]zap.Field, 0, 16)
+        return &slice
+    },
+}
+
+// toZapFieldsTransient - pooled, caller must return
+// toZapFields - allocating, for With/Named (long-lived)
+```
+
+- Pool capacity: 16 fields (covers 95% of use cases)
+- Fields > 16 cause one additional allocation
+- Fatal bypasses pool (process exits anyway)
+
+### 4.3 Level-Gated Logging
+
+```go
+func (l *zapLogger) Debug(ctx context.Context, msg string, fields ...Field) {
+    if !l.atomicLvl.Enabled(zapcore.DebugLevel) {
+        return  // Zero cost when filtered
+    }
+    l.logWithFields(ctx, l.zap.Debug, msg, fields)
+}
+```
+
+### 4.4 Config Validation
+
+```go
+if err := cfg.Validate(); err != nil {
+    // Returns all validation errors:
+    // - Invalid level
+    // - File enabled but path empty
+    // - OTEL enabled but endpoint empty
+    // - Invalid protocol (must be grpc/http)
+}
+```
+
+---
+
+## 5. Configuration
+
+### 5.1 Programmatic
+
+```go
+cfg := ion.Config{
+    ServiceName: "my-service",
+    Version:     "1.0.0",
+    Level:       "info",
+    Console: ion.ConsoleConfig{
+        Enabled: true,
+        Format:  "json",  // or "pretty"
+    },
+    OTEL: ion.OTELConfig{
+        Enabled:  true,
+        Endpoint: "localhost:4317",
+        Protocol: "grpc",
+        Insecure: true,
+    },
+    Tracing: ion.TracingConfig{
+        Enabled:  true,
+        Sampler:  "always",  // or "ratio:0.1"
+    },
+}
+```
+
+### 5.2 Fluent Builders
+
+```go
+cfg := ion.Default().
+    WithService("my-service").
+    WithOTEL("localhost:4317").
+    WithTracing("localhost:4317")
+```
+
+---
+
+## 6. Performance
+
+### 6.1 Benchmark Results
+
+| Scenario | ns/op | allocs |
+|----------|-------|--------|
+| Debug filtered | 2 | 0 |
+| Info no fields | 11 | 0 |
+| Info 3 fields | 94 | 1 |
+| Info 10 fields | 230 | 1 |
+| Info with trace | 111 | 2 |
+| Error with err | ~100 | 1 |
+| Console JSON | ~5000 | 3 |
+
+### 6.2 Optimization Techniques
+
+1. **Early level check** - Skip field conversion for filtered logs
+2. **Sync.Pool** - Reuse field slices
+3. **context.Background() check** - Skip trace extraction for startup logs
+4. **Type-specific fields** - Avoid interface boxing
+5. **Lazy allocation** - extractContextZapFields only allocates when needed
+
+---
+
+## 7. Testing
+
+### 7.1 Test Coverage
+
+| Area | Coverage |
+|------|----------|
+| Config | ✅ Defaults, builders, Validate |
+| Logger methods | ✅ All levels |
+| Ion struct | ✅ New, Shutdown, Tracer |
+| Global pattern | ✅ SetGlobal, L, fallback |
+| Middleware | ✅ HTTP handler, gRPC stats |
+
+### 7.2 Running Tests
+
+```bash
+go test ./...                    # All tests
+go test -bench=. -benchmem ./... # Benchmarks
+go run examples/otel-test/main.go # OTEL integration
+```
+
+---
+
+## 8. Usage Patterns
+
+### 8.1 Dependency Injection (Recommended)
+
+```go
+func NewServer(logger ion.Logger) *Server {
+    return &Server{log: logger.Named("server")}
+}
+
+func main() {
+    app, _, _ := ion.New(cfg)
+    server := NewServer(app)
+}
+```
+
+### 8.2 Global Pattern (Scripts/Legacy)
+
+```go
+app, _, _ := ion.New(cfg)
+ion.SetGlobal(app)
+
+ion.Info(ctx, "using global")
+```
+
+### 8.3 Child Loggers
+
+```go
+// Named - adds "logger" field
+httpLog := app.Named("http")
+
+// With - adds permanent fields
+userLog := app.With(ion.Int("user_id", 42))
+```
+
+---
+
+## 9. OTEL Integration
+
+### 9.1 Docker Compose Setup
+
+```bash
+docker compose up -d  # Starts OTEL collector + Jaeger
+go run examples/otel-test/main.go
+# Traces: http://localhost:16686
+# Logs: docker compose logs otel-collector
+```
+
+### 9.2 Middleware
+
+```go
+// HTTP
+handler := ionhttp.Handler(myHandler, "api")
+
+// gRPC
+grpc.NewServer(grpc.StatsHandler(iongrpc.ServerHandler()))
+```
+
+---
+
+## 10. Warning System
+
+```go
+type Warning struct {
+    Component string  // "otel", "tracing"
+    Err       error
+}
+
+// New() returns warnings instead of failing
+// Caller decides: log, panic, or ignore
+app, warnings, err := ion.New(cfg)
+```
+
+---
+
+## 11. Git History (Recent)
+
+```
+d8f5deb test: docker-compose and OTEL trace correlation test
+d686b0d feat: proper OTEL trace correlation with filtercore
+f0c4ba7 feat: structured init warnings and Fatal documentation
+acd65ac feat: P2 fixes - Uint64 type and middleware tests
+0ed41b1 fix: P0/P1/weaknesses from SWOT audit
+```
+
+---
+
+## 12. Repository Structure
+
+```
+ion/
+├── ion.go              # Entry point, Ion struct
+├── zap.go              # Logger implementation
+├── logger.go           # Interfaces, Field types
+├── config.go           # Configuration
+├── context.go          # Context helpers
+├── filtercore.go       # Field filtering
+├── global.go           # Global pattern
+├── tracer.go           # Tracing interfaces
+├── internal/otel/      # OTEL provider/tracer setup
+├── fields/             # Domain-specific fields
+├── middleware/         # HTTP/gRPC wrappers
+├── examples/           # Usage examples
+├── docker-compose.yml  # OTEL test infrastructure
+└── *_test.go           # Tests and benchmarks
+```
+
+---
+
+## 13. Key Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Context-first API | Enforces trace propagation |
+| Warning system | Never fail on optional components |
+| filtercore | Clean console + proper OTEL correlation |
+| Uint64 type | Blockchain values > 2^63 |
+| Pool cap 16 | Covers 95% use cases |
+| Fatal flushes | Best-effort log delivery before exit |
