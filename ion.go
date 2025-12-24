@@ -149,9 +149,16 @@ func (i *Ion) GetLevel() string {
 
 // --- Tracer access ---
 
+var tracingDisabledLogged bool
+
 // Tracer returns a named tracer for creating spans.
+// If tracing is not enabled, returns a no-op tracer (logs warning once).
 func (i *Ion) Tracer(name string) Tracer {
 	if !i.tracingEnabled || i.tracerProvider == nil {
+		if !tracingDisabledLogged {
+			tracingDisabledLogged = true
+			log.Println("[ion] Tracing disabled: Tracer() returning no-op. Enable via Config.Tracing.Enabled")
+		}
 		return noopTracer{}
 	}
 	return newOTELTracer(name)

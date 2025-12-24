@@ -1,7 +1,9 @@
 package ion
 
 import (
+	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -249,4 +251,58 @@ func NewFileWriter(cfg FileConfig) io.Writer {
 		MaxAge:     cfg.MaxAgeDays,
 		Compress:   cfg.Compress,
 	}
+}
+
+// Validate checks the configuration for invalid values.
+// Returns nil if valid, or an error describing all validation failures.
+func (c Config) Validate() error {
+	var errs []string
+
+	// Validate level
+	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "warning": true, "error": true, "fatal": true}
+	if c.Level != "" && !validLevels[strings.ToLower(c.Level)] {
+		errs = append(errs, fmt.Sprintf("invalid level %q (use: debug, info, warn, error, fatal)", c.Level))
+	}
+
+	// Validate console format
+	if c.Console.Format != "" && c.Console.Format != "json" && c.Console.Format != "pretty" {
+		errs = append(errs, fmt.Sprintf("invalid console format %q (use: json, pretty)", c.Console.Format))
+	}
+
+	// Validate file config
+	if c.File.Enabled {
+		if c.File.Path == "" {
+			errs = append(errs, "file logging enabled but path is empty")
+		}
+		if c.File.MaxSizeMB < 0 {
+			errs = append(errs, "file max_size_mb cannot be negative")
+		}
+		if c.File.MaxBackups < 0 {
+			errs = append(errs, "file max_backups cannot be negative")
+		}
+		if c.File.MaxAgeDays < 0 {
+			errs = append(errs, "file max_age_days cannot be negative")
+		}
+	}
+
+	// Validate OTEL config
+	if c.OTEL.Enabled && c.OTEL.Endpoint == "" {
+		errs = append(errs, "OTEL enabled but endpoint is empty")
+	}
+	if c.OTEL.Protocol != "" && c.OTEL.Protocol != "grpc" && c.OTEL.Protocol != "http" {
+		errs = append(errs, fmt.Sprintf("invalid OTEL protocol %q (use: grpc, http)", c.OTEL.Protocol))
+	}
+
+	// Validate tracing config
+	if c.Tracing.Enabled && c.Tracing.Endpoint == "" && c.OTEL.Endpoint == "" {
+		errs = append(errs, "tracing enabled but no endpoint (set Tracing.Endpoint or OTEL.Endpoint)")
+	}
+	if c.Tracing.Protocol != "" && c.Tracing.Protocol != "grpc" && c.Tracing.Protocol != "http" {
+		errs = append(errs, fmt.Sprintf("invalid tracing protocol %q (use: grpc, http)", c.Tracing.Protocol))
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("config validation failed: %s", strings.Join(errs, "; "))
+	}
+	return nil
 }

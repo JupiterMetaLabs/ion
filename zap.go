@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/JupiterMetaLabs/ion/internal/otel"
 	"go.opentelemetry.io/contrib/bridges/otelzap"
@@ -290,6 +291,10 @@ func (l *zapLogger) Warn(ctx context.Context, msg string, fields ...Field) {
 
 // Error logs a message at error level with an optional error.
 func (l *zapLogger) Error(ctx context.Context, msg string, err error, fields ...Field) {
+	if !l.atomicLvl.Enabled(zapcore.ErrorLevel) {
+		return
+	}
+
 	zapFields := toZapFieldsTransient(fields)
 	contextZapFields := extractContextZapFields(ctx)
 
@@ -312,26 +317,31 @@ func (l *zapLogger) Error(ctx context.Context, msg string, err error, fields ...
 }
 
 // Fatal logs a message at fatal level and calls os.Exit(1).
+// Note: This method syncs the logger before exiting to ensure logs are flushed.
+// Pool cleanup is skipped since the process exits immediately.
 func (l *zapLogger) Fatal(ctx context.Context, msg string, err error, fields ...Field) {
-	zapFields := toZapFieldsTransient(fields)
+	// Use allocating conversion since os.Exit prevents pool cleanup
+	zapFields := toZapFields(fields)
 	contextZapFields := extractContextZapFields(ctx)
 
-	if zapFields == nil {
-		var allFields []zap.Field
-		if err != nil {
-			allFields = append(allFields, zap.Error(err))
-		}
-		allFields = append(allFields, contextZapFields...)
-		l.zap.Fatal(msg, allFields...)
-		return
+	var allFields []zap.Field
+	if err != nil {
+		allFields = append(allFields, zap.Error(err))
+	}
+	allFields = append(allFields, zapFields...)
+	allFields = append(allFields, contextZapFields...)
+
+	// Sync before Fatal to flush buffered logs
+	_ = l.zap.Sync()
+
+	// Shutdown OTEL provider to flush traces (best effort)
+	if l.otelProvider != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = l.otelProvider.Shutdown(ctx)
+		cancel()
 	}
 
-	if err != nil {
-		*zapFields = append(*zapFields, zap.Error(err))
-	}
-	*zapFields = append(*zapFields, contextZapFields...)
-	l.zap.Fatal(msg, *zapFields...)
-	putZapFields(zapFields)
+	l.zap.Fatal(msg, allFields...)
 }
 
 func (l *zapLogger) With(fields ...Field) Logger {

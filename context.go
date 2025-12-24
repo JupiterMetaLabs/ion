@@ -60,16 +60,18 @@ func UserIDFromContext(ctx context.Context) string {
 
 // extractContextZapFields pulls trace/span IDs and custom values from context.
 // Returns zap.Field slice directly for use in log methods (avoids Field conversion).
+// Lazily allocates the slice only when fields are found.
 func extractContextZapFields(ctx context.Context) []zap.Field {
 	if ctx == nil {
 		return nil
 	}
 
-	fields := make([]zap.Field, 0, 4)
+	var fields []zap.Field
 
 	// Extract OTEL trace context (if available)
 	spanCtx := trace.SpanContextFromContext(ctx)
 	if spanCtx.IsValid() {
+		fields = make([]zap.Field, 0, 4)
 		fields = append(fields,
 			zap.String("trace_id", spanCtx.TraceID().String()),
 			zap.String("span_id", spanCtx.SpanID().String()),
@@ -77,20 +79,32 @@ func extractContextZapFields(ctx context.Context) []zap.Field {
 	} else {
 		// Fallback to manual trace ID if set
 		if traceID, ok := ctx.Value(traceIDKey).(string); ok && traceID != "" {
+			if fields == nil {
+				fields = make([]zap.Field, 0, 4)
+			}
 			fields = append(fields, zap.String("trace_id", traceID))
 		}
 		if spanID, ok := ctx.Value(spanIDKey).(string); ok && spanID != "" {
+			if fields == nil {
+				fields = make([]zap.Field, 0, 4)
+			}
 			fields = append(fields, zap.String("span_id", spanID))
 		}
 	}
 
 	// Extract request ID
 	if reqID, ok := ctx.Value(requestIDKey).(string); ok && reqID != "" {
+		if fields == nil {
+			fields = make([]zap.Field, 0, 4)
+		}
 		fields = append(fields, zap.String("request_id", reqID))
 	}
 
 	// Extract user ID
 	if userID, ok := ctx.Value(userIDKey).(string); ok && userID != "" {
+		if fields == nil {
+			fields = make([]zap.Field, 0, 4)
+		}
 		fields = append(fields, zap.String("user_id", userID))
 	}
 

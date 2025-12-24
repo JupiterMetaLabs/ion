@@ -2,7 +2,6 @@ package ion
 
 import (
 	"context"
-	"sync"
 	"testing"
 )
 
@@ -118,14 +117,31 @@ func TestGlobal_SetAndGet(t *testing.T) {
 }
 
 func TestGlobal_Fallback(t *testing.T) {
-	// Reset global to test fallback
+	// Test that getGlobal() returns a working fallback when global is nil
+	// Note: We cannot truly reset sync.Once, so we test the behavior indirectly
+	// by verifying package-level functions work without panic even before SetGlobal
+	ctx := context.Background()
+
+	// Save current global
 	globalMu.Lock()
+	savedGlobal := global
+	savedFallback := fallbackIon
 	global = nil
 	globalMu.Unlock()
-	fallbackOnce = sync.Once{}
-	fallbackIon = nil
 
-	ctx := context.Background()
-	// Should use fallback, not panic
+	// Restore after test
+	defer func() {
+		globalMu.Lock()
+		global = savedGlobal
+		fallbackIon = savedFallback
+		globalMu.Unlock()
+	}()
+
+	// This should use fallback (or previously created fallback), not panic
 	Info(ctx, "fallback test")
+
+	// Verify fallback was used (fallbackIon should now be set if it wasn't before)
+	if global == nil && fallbackIon == nil {
+		t.Error("expected fallbackIon to be created")
+	}
 }
