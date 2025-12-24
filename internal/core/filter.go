@@ -1,11 +1,5 @@
-// filtercore.go provides a zapcore.Core wrapper that filters specific fields.
-//
-// Used for trace correlation with collision avoidance:
-// - Console/File: filters sentinel key "__ion_ctx__" (ugly {} output from zap.Reflect)
-// - OTEL: filters "trace_id"/"span_id" strings (redundant, LogRecord has them via bridge)
-//
-// The sentinel key prevents accidental collision with user-defined field names.
-package ion
+// Package core provides the internal implementation of Ion's logging and tracing.
+package core
 
 import "go.uber.org/zap/zapcore"
 
@@ -15,7 +9,8 @@ type filteringCore struct {
 	filterKeys []string
 }
 
-func newFilteringCore(core zapcore.Core, keys ...string) zapcore.Core {
+// NewFilteringCore creates a core that filters out specific keys.
+func NewFilteringCore(core zapcore.Core, keys ...string) zapcore.Core {
 	return &filteringCore{Core: core, filterKeys: keys}
 }
 

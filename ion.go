@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 
-	internalotel "github.com/JupiterMetaLabs/ion/internal/otel"
+	"github.com/JupiterMetaLabs/ion/internal/core"
+	"go.uber.org/zap"
 )
 
 // Ion is the unified observability instance providing logging and tracing.
@@ -28,14 +30,14 @@ import (
 //	ctx, span := tracer.Start(ctx, "Operation")
 //	defer span.End()
 //
-//	// Global usage (same API)
+//	// Global usage (DEPRECATED: Prefer Dependency Injection)
 //	ion.SetGlobal(app)
-//	ion.Info(ctx, "works from anywhere")
+//	ion.Info(ctx, "works from anywhere (but try to avoid this)")
 type Ion struct {
 	logger         Logger
 	serviceName    string
 	version        string
-	tracerProvider *internalotel.TracerProvider
+	tracerProvider *core.TracerProvider
 	tracingEnabled bool
 }
 
@@ -57,17 +59,7 @@ func (w Warning) Error() string {
 // Returns:
 //   - *Ion: Always returns a working Ion instance (may use fallbacks)
 //   - []Warning: Non-fatal issues (e.g., OTEL connection failed, tracing disabled)
-//   - error: Fatal configuration errors (currently always nil, reserved for future use)
-//
-// Example:
-//
-//	app, warnings, err := ion.New(cfg)
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
-//	for _, w := range warnings {
-//	    log.Printf("ion warning: %v", w)
-//	}
+//   - error: Fatal configuration errors
 func New(cfg Config) (*Ion, []Warning, error) {
 	var warnings []Warning
 
@@ -76,54 +68,35 @@ func New(cfg Config) (*Ion, []Warning, error) {
 		version:     cfg.Version,
 	}
 
-	// Create logger
-	if cfg.OTEL.Enabled && cfg.OTEL.Endpoint != "" {
-		logger, err := newZapLoggerWithOTEL(cfg)
-		if err != nil {
-			warnings = append(warnings, Warning{
-				Component: "otel",
-				Err:       fmt.Errorf("failed to init OTEL logger: %w (using basic logger)", err),
-			})
-			ion.logger = newZapLogger(cfg)
-		} else {
-			ion.logger = logger
-		}
-	} else {
-		ion.logger = newZapLogger(cfg)
+	// 1. Setup Logger (Zap + OTEL Logs)
+	zapRes, err := core.NewZapLogger(cfg)
+	if err != nil {
+		// Fatal error if we can't even init Zap (e.g. file error)
+		return nil, nil, fmt.Errorf("failed to init logger: %w", err)
 	}
 
-	// Setup tracing
+	// Construct the logger wrapper
+	ion.logger = &zapLogger{
+		zap:          zapRes.Logger,
+		config:       cfg,
+		atomicLvl:    zapRes.AtomicLevel,
+		otelProvider: zapRes.OTELProvider,
+	}
+
+	// 2. Setup Tracing (OTEL Traces)
 	if cfg.Tracing.Enabled {
-		endpoint := cfg.Tracing.Endpoint
-		if endpoint == "" {
-			endpoint = cfg.OTEL.Endpoint
+		// Use Tracing endpoint or fallback to OTEL endpoint
+		if cfg.Tracing.Endpoint == "" {
+			cfg.Tracing.Endpoint = cfg.OTEL.Endpoint
+		}
+		if cfg.Tracing.Protocol == "" {
+			cfg.Tracing.Protocol = cfg.OTEL.Protocol
+		}
+		if !cfg.Tracing.Insecure && cfg.OTEL.Insecure {
+			cfg.Tracing.Insecure = true // Inherit insecure if not explicitly set
 		}
 
-		protocol := cfg.Tracing.Protocol
-		if protocol == "" {
-			protocol = cfg.OTEL.Protocol
-		}
-
-		insecure := cfg.Tracing.Insecure
-		if !insecure && cfg.OTEL.Insecure {
-			insecure = true
-		}
-
-		tracerCfg := internalotel.TracerConfig{
-			Enabled:        true,
-			Endpoint:       endpoint,
-			Protocol:       protocol,
-			Insecure:       insecure,
-			Sampler:        cfg.Tracing.Sampler,
-			Propagators:    cfg.Tracing.Propagators,
-			BatchSize:      cfg.Tracing.BatchSize,
-			ExportInterval: cfg.Tracing.ExportInterval,
-			Timeout:        cfg.Tracing.Timeout,
-			Headers:        cfg.Tracing.Headers,
-			Attributes:     cfg.Tracing.Attributes,
-		}
-
-		tp, err := internalotel.SetupTracer(tracerCfg, cfg.ServiceName, cfg.Version)
+		tp, err := core.SetupTracerProvider(cfg.Tracing, cfg.ServiceName, cfg.Version)
 		if err != nil {
 			warnings = append(warnings, Warning{
 				Component: "tracing",
@@ -136,6 +109,100 @@ func New(cfg Config) (*Ion, []Warning, error) {
 	}
 
 	return ion, warnings, nil
+}
+
+// --- Global Accessor (Deprecated) ---
+
+var (
+	globalLogger Logger
+	globalMu     sync.RWMutex
+	globalOnce   sync.Once
+)
+
+// SetGlobal sets the global logger instance.
+//
+// Deprecated: Use Dependency Injection instead. This method exists for migration
+// purposes only and will be removed in a future version.
+func SetGlobal(logger Logger) {
+	globalOnce.Do(func() {
+		// Log warning on first usage
+		log.Println("[ion] WARNING: ion.SetGlobal is deprecated. Please inject ion.Logger explicitly.")
+	})
+	globalMu.Lock()
+	defer globalMu.Unlock()
+	globalLogger = logger
+}
+
+// GetGlobal returns the global logger.
+// If SetGlobal has not been called, it returns a safe no-op logger.
+func GetGlobal() Logger {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+	if globalLogger != nil {
+		return globalLogger
+	}
+	return nopLogger
+}
+
+var nopLogger Logger = &zapLogger{
+	zap:       zap.NewNop(),
+	atomicLvl: zap.NewAtomicLevel(),
+}
+
+// Debug logs at debug level using global logger.
+func Debug(ctx context.Context, msg string, fields ...Field) {
+	GetGlobal().Debug(ctx, msg, fields...)
+}
+
+// Info logs at info level using global logger.
+func Info(ctx context.Context, msg string, fields ...Field) {
+	GetGlobal().Info(ctx, msg, fields...)
+}
+
+// Warn logs at warn level using global logger.
+func Warn(ctx context.Context, msg string, fields ...Field) {
+	GetGlobal().Warn(ctx, msg, fields...)
+}
+
+// Error logs at error level using global logger.
+func Error(ctx context.Context, msg string, err error, fields ...Field) {
+	GetGlobal().Error(ctx, msg, err, fields...)
+}
+
+// Critical logs at critical level using global logger.
+// Does NOT exit the process - caller decides what to do.
+func Critical(ctx context.Context, msg string, err error, fields ...Field) {
+	GetGlobal().Critical(ctx, msg, err, fields...)
+}
+
+// GetTracer returns a named tracer from global Ion.
+// Note: This relies on SetGlobal being called with an *Ion instance (or implementation that supports Tracer())
+// If the global logger does not support Tracer, this might fail or return no-op.
+// Since Logger interface doesn't have Tracer(), we can only check if global is *Ion.
+// BUT, legacy GetTracer probably used `otel.Tracer`.
+// We should probably just call `otel.Tracer` directly here or use `GetGlobal`?
+// The previous implementation called `getGlobal().Tracer()`.
+// Since `Logger` interface does NOT have `Tracer`, `ion.Tracer` works on `*Ion`.
+// So `GetGlobal()` returning `Logger` logic is tricky for `Tracer`.
+// Fix: Check type assertion.
+func GetTracer(name string) Tracer {
+	if ion, ok := GetGlobal().(*Ion); ok {
+		return ion.Tracer(name)
+	}
+	// Fallback to OTEL directly if global logger isn't *Ion?
+	// or return no-op.
+	// We'll return a no-op tracer with a warning log if possible.
+	return newOTELTracer(name) // This uses global OTEL provider set by core.
+}
+
+// Sync flushes the global logger.
+func Sync() error {
+	return GetGlobal().Sync()
+}
+
+// Named returns a child logger from global.
+func Named(name string) Logger {
+	return GetGlobal().Named(name)
 }
 
 // --- Logger interface implementation ---
@@ -194,6 +261,8 @@ func (i *Ion) Tracer(name string) Tracer {
 		}
 		return noopTracer{}
 	}
+	// core.SetupTracerProvider sets the global OTEL provider,
+	// so newOTELTracer(name) which calls otel.Tracer(name) works correctly.
 	return newOTELTracer(name)
 }
 

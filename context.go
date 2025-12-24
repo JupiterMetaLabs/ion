@@ -79,9 +79,7 @@ func extractContextZapFields(ctx context.Context) []zap.Field {
 	} else {
 		// Fallback to manual trace ID if set
 		if traceID, ok := ctx.Value(traceIDKey).(string); ok && traceID != "" {
-			if fields == nil {
-				fields = make([]zap.Field, 0, 4)
-			}
+			fields = make([]zap.Field, 0, 4)
 			fields = append(fields, zap.String("trace_id", traceID))
 		}
 		if spanID, ok := ctx.Value(spanIDKey).(string); ok && spanID != "" {

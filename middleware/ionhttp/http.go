@@ -11,7 +11,7 @@
 //
 //	client := ionhttp.Client()
 //	resp, err := client.Get("https://api.example.com")
-package http
+package ionhttp
 
 import (
 	"net/http"

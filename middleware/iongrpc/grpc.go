@@ -11,7 +11,7 @@
 //	conn, err := grpc.Dial(addr,
 //	    grpc.WithStatsHandler(iongrpc.ClientHandler()),
 //	)
-package grpc
+package iongrpc
 
 import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"

@@ -1,24 +1,55 @@
 # Ion
 
-**Ion** is an enterprise-grade observability library for Go, providing unified **structured logging** and **distributed tracing** with seamless [OpenTelemetry](https://opentelemetry.io/) integration.
+**Ion** is an enterprise-grade observability client for Go services. It unifies **structured logging** (Zap) and **distributed tracing** (OpenTelemetry) into a single, cohesive API designed for high-throughput, long-running infrastructure.
 
-## Features
+> **Status:** v0.2 Release Candidate  
+> **Target:** Microservices, Blockchain Nodes, Distributed Systems
 
-- 🚀 **High Performance** - Pool-optimized, low-allocation logging (~10ns)
-- 🔭 **OpenTelemetry Native** - Logs AND traces with automatic correlation
-- 🔗 **Trace Correlation** - `trace_id`/`span_id` automatically extracted from context
-- 🛡️ **Enterprise Grade** - Graceful shutdown, file rotation, runtime level changes
-- ⛓️ **Blockchain Ready** - Field helpers for `TxHash`, `BlockHeight`, `ShardID`
+---
+
+## Guarantees & Design Invariants
+
+Ion is built on strict operational guarantees. Operators can rely on these invariants in production:
+
+1.  **No Process Termination**: Ion will **never** call `os.Exit`, `panic`, or `log.Fatal`. Even `Critical` level logs are strictly informational (mapped to FATAL severity) and guarantee control flow returns to the caller.
+2.  **Thread Safety**: All public APIs on `Logger` and `Tracer` are safe for concurrent use by multiple goroutines.
+3.  **Non-Blocking Telemetry**: Trace export is asynchronous and decoupled from application logic. A slow OTEL collector will never block your business logic (logs are synchronous to properly handle crash reporting, but rely on high-performance buffered writes).
+4.  **Failure Isolation**: Telemetry backend failures (e.g., Collector down) are isolated. They may result in data loss (dropped spans) but will **never** crash the service.
+
+## Non-Goals
+
+To maintain focus and stability, Ion explicitly avoids:
+*   **Metrics**: Use the Prometheus or OpenTelemetry Metrics SDKs directly.
+*   **Alerting**: Ion emits signals; it does not manage thresholds or paging.
+*   **Framework Magic**: Ion does not auto-inject into HTTP handlers without explicit middleware usage.
+
+---
+
+## Operational Model
+
+### How Ion Works
+*   **Logs**: Emitted **synchronously** to the configured cores (Console/File/Memory). This ensures that if your application crashes immediately after a log statement, the log is persisted (up to OS buffering).
+*   **Traces**: Buffered and exported **asynchronously**. Spans are batched in memory and sent to the configured OTEL, endpoint on a timer or size threshold.
+*   **Correlation**: `trace_id` and `span_id` are extracted from `context.Context` at the moment of logging and injected as fields.
+
+### When to Use Logs vs Traces
+*   **Logs**: Use for **state changes**, **errors**, and **high-cardinality events** (e.g., specific transaction failure reasons). Logs must be reliable and available immediately.
+*   **Traces**: Use for **latency analysis**, **causality** (who called whom), and **request flows**. Traces are sampled and statistically significant, but individual traces may be dropped under load.
+
+---
 
 ## Installation
 
 ```bash
-go get github.com/JupiterMetaLabs/ion@latest
+go get github.com/JupiterMetaLabs/ion
 ```
+Requires Go 1.21+.
 
 ---
 
 ## Quick Start
+
+A minimal, correct example for a production service.
 
 ```go
 package main
@@ -26,608 +57,225 @@ package main
 import (
     "context"
     "log"
-    
+    "time"
+
     "github.com/JupiterMetaLabs/ion"
 )
 
 func main() {
     ctx := context.Background()
 
-    // Create Ion instance
-    app, err := ion.New(ion.Default().WithService("myapp"))
+    // 1. Initialize with Service Identity
+    // Returns warning slice for non-fatal config issues (e.g. invalid OTEL url)
+    app, warnings, err := ion.New(ion.Default().WithService("payment-node"))
     if err != nil {
-        log.Fatal(err)
+        log.Fatalf("Fatal: failed to init observability: %v", err)
     }
-    defer app.Shutdown(ctx) // CRITICAL: Always shutdown!
+    for _, w := range warnings {
+        log.Printf("Ion Startup Warning: %v", w)
+    }
 
-    // Log messages
-    app.Info(ctx, "application started", ion.String("version", "1.0.0"))
-    app.Debug(ctx, "debug info")
-    app.Warn(ctx, "something concerning")
-    app.Error(ctx, "operation failed", err, ion.String("op", "db_connect"))
-}
-```
-
----
-
-## Table of Contents
-
-1. [Initialization](#initialization)
-2. [Shutdown](#shutdown)
-3. [Logging](#logging)
-4. [Child Loggers](#child-loggers)
-5. [Tracing](#tracing)
-6. [Trace-Log Correlation](#trace-log-correlation)
-7. [Global Usage](#global-usage)
-8. [Configuration Reference](#configuration-reference)
-9. [Blockchain Fields](#blockchain-fields)
-10. [Production Example](#production-example)
-
----
-
-## Initialization
-
-### Basic Logger (Console Only)
-
-```go
-app, err := ion.New(ion.Default().WithService("myapp"))
-if err != nil {
-    log.Fatal(err)
-}
-defer app.Shutdown(ctx)
-```
-
-### Development Mode (Pretty Console)
-
-```go
-app, err := ion.New(ion.Development())
-if err != nil {
-    log.Fatal(err)
-}
-```
-
-### With OTEL Logging
-
-```go
-app, err := ion.New(ion.Default().
-    WithService("myapp").
-    WithOTEL("localhost:4317"))  // Collector endpoint
-```
-
-### With Tracing + OTEL Logging
-
-```go
-app, err := ion.New(ion.Default().
-    WithService("myapp").
-    WithOTEL("localhost:4317").
-    WithTracing("localhost:4317"))
-```
-
-### Full Configuration
-
-```go
-cfg := ion.Config{
-    Level:       "info",
-    Development: false,
-    ServiceName: "order-service",
-    Version:     "v2.1.0",
-    
-    Console: ion.ConsoleConfig{
-        Enabled:        true,
-        Format:         "json",     // "json" or "pretty"
-        Color:          true,
-        ErrorsToStderr: true,       // warn/error → stderr
-    },
-    
-    File: ion.FileConfig{
-        Enabled:    true,
-        Path:       "/var/log/app/app.log",
-        MaxSizeMB:  100,
-        MaxBackups: 5,
-        Compress:   true,
-    },
-    
-    OTEL: ion.OTELConfig{
-        Enabled:   true,
-        Endpoint:  "collector:4317",
-        Protocol:  "grpc",          // "grpc" or "http"
-        Insecure:  false,
-        Username:  "user",          // Basic Auth (optional)
-        Password:  "pass",
-        Attributes: map[string]string{
-            "env": "production",
-        },
-    },
-    
-    Tracing: ion.TracingConfig{
-        Enabled:  true,
-        Sampler:  "ratio:0.1",      // Sample 10%
-        // Endpoint defaults to OTEL.Endpoint if not set
-    },
-}
-
-app, err := ion.New(cfg)
-```
-
----
-
-## Shutdown
-
-**Critical**: Always call `Shutdown()` before exit to flush logs and traces.
-
-```go
-func main() {
-    app, _ := ion.New(cfg)
-    
-    // Use defer for graceful shutdown
+    // 2. Establishing the Lifecycle Contract
+    // Ensure logs/traces flush before exit.
     defer func() {
-        ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
         defer cancel()
-        if err := app.Shutdown(ctx); err != nil {
-            log.Printf("shutdown error: %v", err)
+        // Errors here mean data loss, not application failure.
+        if err := app.Shutdown(shutdownCtx); err != nil {
+            log.Printf("Shutdown data loss: %v", err)
         }
     }()
+
+    // 3. Application Logic
+    app.Info(ctx, "node started", ion.String("version", "1.0.0"))
     
-    // ... application code
+    // Simulate work
+    doWork(ctx, app)
 }
-```
 
-**What Shutdown does:**
-1. Flushes pending log entries
-2. Shuts down OTEL log exporter (if configured)
-3. Shuts down tracer provider (flushes pending spans)
-
----
-
-## Logging
-
-### Log Levels
-
-```go
-app.Debug(ctx, "detailed debugging info")
-app.Info(ctx, "normal operation")
-app.Warn(ctx, "something might be wrong")
-app.Error(ctx, "operation failed", err)  // err can be nil
-app.Fatal(ctx, "unrecoverable error", err) // calls os.Exit(1)
-```
-
-### Structured Fields
-
-```go
-// Type-safe constructors (preferred)
-app.Info(ctx, "user action",
-    ion.String("user_id", "u123"),
-    ion.Int("action_code", 42),
-    ion.Float64("score", 0.95),
-    ion.Bool("premium", true),
-)
-
-// Generic constructor (auto-detects type)
-app.Info(ctx, "event", ion.F("key", value))
-```
-
-### Runtime Level Changes
-
-```go
-// Change level at runtime (thread-safe)
-app.SetLevel("debug")
-
-// Get current level
-level := app.GetLevel() // "debug"
-```
-
----
-
-## Child Loggers
-
-Child loggers add context that appears in all their log entries.
-
-### Named (Component Scoping)
-
-```go
-// Create component-scoped loggers
-httpLog := app.Named("http")
-dbLog := app.Named("database")
-cacheLog := app.Named("cache")
-
-httpLog.Info(ctx, "request received")
-// Output: {"logger":"http", "msg":"request received", ...}
-
-dbLog.Info(ctx, "query executed")
-// Output: {"logger":"database", "msg":"query executed", ...}
-```
-
-### With (Permanent Fields)
-
-```go
-// Add fields that persist across all logs from this child
-userLog := app.With(
-    ion.String("user_id", "u123"),
-    ion.String("tenant", "acme"),
-)
-
-userLog.Info(ctx, "action performed")
-// Output: {"user_id":"u123", "tenant":"acme", "msg":"action performed", ...}
-
-// Children can be nested
-sessionLog := userLog.With(ion.String("session_id", "s456"))
-sessionLog.Info(ctx, "session event")
-// Output: {"user_id":"u123", "tenant":"acme", "session_id":"s456", ...}
-```
-
-### Combining Named and With
-
-```go
-// Best practice: scope by component, then add instance fields
-orderSvc := app.Named("orders").With(ion.String("region", "us-east"))
-
-orderSvc.Info(ctx, "order processed")
-// Output: {"logger":"orders", "region":"us-east", "msg":"order processed", ...}
-```
-
----
-
-## Tracing
-
-Ion provides a clean tracing API that wraps OpenTelemetry.
-
-### Creating a Tracer
-
-```go
-// Get a tracer for your component
-tracer := app.Tracer("myapp.orders")  // Instrumentation scope name
-```
-
-### Creating Spans
-
-```go
-func ProcessOrder(ctx context.Context, orderID string) error {
-    tracer := app.Tracer("myapp.orders")
-    
-    // Start a span (automatically linked to parent if in context)
-    ctx, span := tracer.Start(ctx, "ProcessOrder")
-    defer span.End()  // Always end spans!
-    
-    // Add attributes
-    span.SetAttributes(attribute.String("order_id", orderID))
-    
-    // Log with trace correlation
-    app.Info(ctx, "processing order", ion.String("order_id", orderID))
-    
-    if err := validateOrder(ctx, orderID); err != nil {
-        span.RecordError(err)
-        span.SetStatus(codes.Error, "validation failed")
-        return err
-    }
-    
-    span.SetStatus(codes.Ok, "")
-    return nil
+func doWork(ctx context.Context, logger ion.Logger) {
+    // Context is mandatory for correlation
+    logger.Info(ctx, "processing block", ion.Uint64("height", 100))
 }
-```
-
-### Nested Spans
-
-```go
-func HandleRequest(ctx context.Context) {
-    tracer := app.Tracer("myapp.api")
-    
-    ctx, parentSpan := tracer.Start(ctx, "HandleRequest")
-    defer parentSpan.End()
-    
-    // Child spans automatically link to parent via context
-    ctx, dbSpan := tracer.Start(ctx, "QueryDatabase")
-    // ... db work
-    dbSpan.End()
-    
-    ctx, cacheSpan := tracer.Start(ctx, "CheckCache")
-    // ... cache work
-    cacheSpan.End()
-}
-```
-
-### Span Options
-
-```go
-// Set span kind
-ctx, span := tracer.Start(ctx, "CallExternalAPI",
-    ion.WithSpanKind(trace.SpanKindClient),
-)
-
-// Add attributes at creation
-ctx, span := tracer.Start(ctx, "ProcessBatch",
-    ion.WithAttributes(
-        attribute.Int("batch_size", 100),
-        attribute.String("source", "kafka"),
-    ),
-)
-```
-
-### Span Methods
-
-```go
-span.End()                           // Mark complete
-span.SetStatus(codes.Ok, "")         // Set success
-span.SetStatus(codes.Error, "msg")   // Set failure
-span.RecordError(err)                // Record error event
-span.SetAttributes(attrs...)         // Add attributes
-span.AddEvent("checkpoint", attrs...)// Add event
-```
-
----
-
-## Trace-Log Correlation
-
-Ion automatically extracts `trace_id` and `span_id` from context and adds them to logs.
-
-```go
-func HandleRequest(ctx context.Context) {
-    tracer := app.Tracer("myapp")
-    ctx, span := tracer.Start(ctx, "HandleRequest")
-    defer span.End()
-    
-    // trace_id and span_id are automatically included!
-    app.Info(ctx, "handling request")
-}
-```
-
-**Log output:**
-```json
-{
-  "level": "info",
-  "msg": "handling request",
-  "trace_id": "abc123...",
-  "span_id": "def456...",
-  "timestamp": "2024-01-01T12:00:00Z"
-}
-```
-
-### Manual Context Values
-
-For non-OTEL scenarios, you can add IDs manually:
-
-```go
-ctx = ion.WithRequestID(ctx, "req-123")
-ctx = ion.WithUserID(ctx, "user-456")
-ctx = ion.WithTraceID(ctx, "trace-789")
-
-app.Info(ctx, "event")
-// Output includes: request_id, user_id, trace_id
-```
-
----
-
-## Global Usage
-
-For scripts or legacy code where dependency injection is impractical.
-
-### Setup
-
-```go
-func main() {
-    app, _ := ion.New(ion.Default().WithService("script"))
-    ion.SetGlobal(app)
-    defer app.Shutdown(ctx)
-    
-    DoWork(ctx)
-}
-```
-
-### Usage
-
-```go
-func DoWork(ctx context.Context) {
-    // Package-level functions use global instance
-    ion.Info(ctx, "working")
-    ion.Debug(ctx, "debug info")
-    
-    // Get tracer from global
-    tracer := ion.GetTracer("script.worker")
-    ctx, span := tracer.Start(ctx, "Work")
-    defer span.End()
-    
-    // Child loggers from global
-    dbLog := ion.Named("database")
-    dbLog.Info(ctx, "query executed")
-}
-```
-
-### Accessing Global
-
-```go
-// Get global instance (panics if not set)
-app := ion.L()
-
-// Sync global logger
-ion.Sync()
 ```
 
 ---
 
 ## Configuration Reference
 
-### Config Fields
+Ion uses a comprehensive configuration struct for behavior control. This maps 1:1 with `ion.Config`.
+
+### Root Configuration (`ion.Config`)
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Level` | `string` | `"info"` | Minimum log level (`debug`, `info`, `warn`, `error`, `fatal`). |
+| `Development` | `bool` | `false` | Enables development mode (pretty output, caller location, stack traces). |
+| `ServiceName` | `string` | `"unknown"` | Identity of the service (vital for trace attribution). |
+| `Version` | `string` | `""` | Service version (e.g., commit hash or semver). |
+| `Console` | `ConsoleConfig` | `Enabled: true` | configuration for stdout/stderr. |
+| `File` | `FileConfig` | `Enabled: false` | configuration for file logging (with rotation). |
+| `OTEL` | `OTELConfig` | `Enabled: false` | configuration for remote OpenTelemetry logging. |
+| `Tracing` | `TracingConfig` | `Enabled: false` | configuration for Distributed Tracing. |
+
+### Console Configuration (`ion.ConsoleConfig`)
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Enabled` | `bool` | `true` | If false, stdout/stderr is silenced. |
+| `Format` | `string` | `"json"` | `"json"` (production) or `"pretty"` (human-readable). |
+| `Color` | `bool` | `true` | Enables ANSI colors (only references `pretty` format). |
+| `ErrorsToStderr` | `bool` | `true` | Writes `warn`/`error`/`fatal` to stderr, others to stdout. |
+
+### File Configuration (`ion.FileConfig`)
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Enabled` | `bool` | `false` | Enables file writing. |
+| `Path` | `string` | `""` | Absolute path to the log file (e.g., `/var/log/app.log`). |
+| `MaxSizeMB` | `int` | `100` | Max size per file before rotation. |
+| `MaxBackups` | `int` | `5` | Number of old files to keep. |
+| `MaxAgeDays` | `int` | `7` | Max age of files to keep. |
+| `Compress` | `bool` | `true` | Gzip old log files. |
+
+### OTEL Configuration (`ion.OTELConfig`)
+Controls the OpenTelemetry **Logs** Exporter.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `Level` | string | `"info"` | Log level: debug/info/warn/error/fatal |
-| `Development` | bool | `false` | Enable dev mode (pretty output, caller info) |
-| `ServiceName` | string | `"unknown"` | Service identifier |
-| `Version` | string | `""` | Application version |
+| `Enabled` | `bool` | `false` | Enables log export to Collector. |
+| `Endpoint` | `string` | `""` | `host:port` (e.g., `localhost:4317`). |
+| `Protocol` | `string` | `"grpc"` | `"grpc"` (recommended) or `"http"`. |
+| `Insecure` | `bool` | `false` | If true, disables TLS (dev only). |
+| `Username` | `string` | `""` | Basic Auth Username. |
+| `Password` | `string` | `""` | Basic Auth Password. |
+| `BatchSize` | `int` | `512` | Max logs per export batch. |
+| `ExportInterval` | `Duration` | `5s` | flush interval. |
 
-### ConsoleConfig
+### Tracing Configuration (`ion.TracingConfig`)
+Controls the OpenTelemetry **Trace** Provider.
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `Enabled` | `true` | Enable console output |
-| `Format` | `"json"` | `"json"` or `"pretty"` |
-| `Color` | `true` | ANSI colors in pretty mode |
-| `ErrorsToStderr` | `true` | Send warn/error to stderr |
-
-### FileConfig
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `Enabled` | `false` | Enable file output |
-| `Path` | `""` | Log file path |
-| `MaxSizeMB` | `100` | Max size before rotation |
-| `MaxBackups` | `5` | Old files to keep |
-| `Compress` | `true` | Gzip old files |
-
-### OTELConfig
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `Enabled` | `false` | Enable OTEL export |
-| `Endpoint` | `""` | Collector address |
-| `Protocol` | `"grpc"` | `"grpc"` or `"http"` |
-| `Insecure` | `false` | Disable TLS |
-| `Username` | `""` | Basic Auth username |
-| `Password` | `""` | Basic Auth password |
-| `BatchSize` | `512` | Logs per batch |
-| `ExportInterval` | `5s` | Batch export interval |
-
-### TracingConfig
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `Enabled` | `false` | Enable tracing |
-| `Endpoint` | OTEL endpoint | Collector address (falls back to OTEL) |
-| `Sampler` | `"always"` | `"always"`, `"never"`, `"ratio:0.5"` |
-| `Protocol` | OTEL protocol | `"grpc"` or `"http"` |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Enabled` | `bool` | `false` | Enables trace generation and export. |
+| `Endpoint` | `string` | `""` | `host:port`. Defaults to `OTEL.Endpoint` if empty. |
+| `Sampler` | `string` | `"always"` | `"always"`, `"never"`, or `"ratio:0.X"` (e.g., `ratio:0.1` for 10%). |
+| `Protocol` | `string` | `"grpc"` | `"grpc"` or `"http"`. |
 
 ---
 
-## Blockchain Fields
+## Detailed Initialization
 
-Import the fields package for domain-specific helpers:
+For full control, initialize the struct directly rather than using builders.
 
 ```go
-import "github.com/JupiterMetaLabs/ion/fields"
+cfg := ion.Config{
+    Level:       "info",
+    ServiceName: "payment-service",
+    Version:     "v1.2.3",
+    
+    Console: ion.ConsoleConfig{
+        Enabled:        true,
+        Format:         "json",
+        ErrorsToStderr: true,
+    },
+    
+    // File rotation
+    File: ion.FileConfig{
+        Enabled:    true,
+        Path:       "/var/log/payment-service.log",
+        MaxSizeMB:  500,
+        MaxBackups: 3,
+        Compress:   true,
+    },
+    
+    // Remote Telemetry (OTEL)
+    OTEL: ion.OTELConfig{
+        Enabled:  true,
+        Endpoint: "otel-collector.prod:4317",
+        Protocol: "grpc",
+        // Attributes added to every log
+        Attributes: map[string]string{
+            "cluster": "us-east-1",
+            "env":     "production",
+        },
+    },
+    
+    // Distributed Tracing
+    Tracing: ion.TracingConfig{
+        Enabled: true,
+        // Fallback to OTEL.Endpoint is automatic if this is empty
+        Sampler: "ratio:0.05", // Sample 5% of traces
+    },
+}
 
-app.Info(ctx, "transaction routed",
-    fields.TxHash("0xabc123..."),
-    fields.BlockHeight(1000000),
-    fields.ShardID(3),
-    fields.LatencyMs(12.5),
-    fields.NodeID("validator-01"),
-)
+// Initialize
+app, warnings, err := ion.New(cfg)
+if err != nil {
+    panic(err)
+}
+// Handle warnings (e.g., invalid sampler string fallback)
+for _, w := range warnings {
+    log.Println("Ion config warning:", w)
+}
+defer app.Shutdown(context.Background())
 ```
 
-**Available fields:**
-- **Transaction:** `TxHash`, `TxSignature`, `TxStatus`, `TxType`, `Nonce`, `GasLimit`, `GasPrice`, `GasUsed`, `Value`, `FromAddress`, `ToAddress`
-- **Block:** `BlockHeight`, `BlockHash`, `Slot`, `Epoch`
-- **Chain:** `ChainID`, `Network`, `ShardID`, `NodeID`, `Address`
-- **Timing:** `LatencyMs`, `DurationMs`, `DurationSec`
-- **Counts:** `Count`, `Size`, `Pending`, `Total`
-- **Component:** `Component`, `Operation`, `Method`
-- **Status:** `Success`, `Enabled`, `Reason`
-
 ---
 
-## Production Example
+## Proper Usage Guide
+
+### 1. The Logger
+Use the Logger for human-readable events, state changes, and errors.
+
+*   **Always** pass `context.Context` (even if generic).
+*   **Prefer** typed fields (`ion.String`) over generic `ion.F`.
+*   **Do not** log sensitive data (PII/Secrets).
 
 ```go
-package main
-
-import (
-    "context"
-    "os"
-    "os/signal"
-    "syscall"
-    "time"
-    
-    "github.com/JupiterMetaLabs/ion"
-    "github.com/JupiterMetaLabs/ion/fields"
+// INFO: Operational state changes
+app.Info(ctx, "transaction processed", 
+    ion.String("tx_id", "0x123"),
+    ion.Duration("latency", 50 * time.Millisecond),
 )
 
-func main() {
-    ctx := context.Background()
-    
-    // Production configuration
-    cfg := ion.Config{
-        Level:       "info",
-        ServiceName: "order-service",
-        Version:     os.Getenv("APP_VERSION"),
-        
-        Console: ion.ConsoleConfig{
-            Enabled:        true,
-            Format:         "json",
-            ErrorsToStderr: true,
-        },
-        
-        OTEL: ion.OTELConfig{
-            Enabled:  true,
-            Endpoint: os.Getenv("OTEL_ENDPOINT"),
-            Insecure: os.Getenv("OTEL_INSECURE") == "true",
-        },
-        
-        Tracing: ion.TracingConfig{
-            Enabled: true,
-            Sampler: "ratio:0.1",  // Sample 10% in production
-        },
-    }
-    
-    // Initialize
-    app, err := ion.New(cfg)
-    if err != nil {
-        panic(err)
-    }
-    ion.SetGlobal(app)  // Optional: for global access
-    
-    // Graceful shutdown
-    defer func() {
-        shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-        defer cancel()
-        if err := app.Shutdown(shutdownCtx); err != nil {
-            os.Stderr.WriteString("shutdown error: " + err.Error() + "\n")
-        }
-    }()
-    
-    // Create component loggers
-    log := app.Named("main")
-    tracer := app.Tracer("order-service.main")
-    
-    // Start main span
-    ctx, span := tracer.Start(ctx, "ApplicationStart")
-    log.Info(ctx, "service starting")
-    
-    // Run your app
-    orderSvc := NewOrderService(app)
-    go orderSvc.Start(ctx)
-    
-    span.End()
-    
-    // Wait for shutdown signal
-    sigChan := make(chan os.Signal, 1)
-    signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-    
-    sig := <-sigChan
-    log.Info(ctx, "received shutdown signal", ion.String("signal", sig.String()))
+// ERROR: Actionable failures. Does not interrupt flow.
+if err != nil {
+    // Automatically adds "error": err.Error() field
+    app.Error(ctx, "database connection failed", err, ion.String("db_host", "primary"))
 }
 
-type OrderService struct {
-    log    ion.Logger
-    tracer ion.Tracer
-}
+// CRITICAL: Invariant violations (e.g. data corruption).
+// Use this for "wake up the on-call" events.
+// GUARANTEE: Does NOT call os.Exit(). Safe to use in libraries.
+app.Critical(ctx, "memory corruption detected", nil)
+```
 
-func NewOrderService(app *ion.Ion) *OrderService {
-    return &OrderService{
-        log:    app.Named("orders"),
-        tracer: app.Tracer("order-service.orders"),
-    }
-}
+### 2. The Tracer
+Use the Tracer for latency measurement and causal chains.
 
-func (s *OrderService) Start(ctx context.Context) {
-    s.log.Info(ctx, "order service starting")
-}
+*   **Start/End**: Every `Start` **MUST** have a corresponding `End()`.
+*   **Defer**: Use `defer span.End()` immediately after checking `err` isn't nil (or just immediately if function is simple).
+*   **Attributes**: Add attributes to spans *only* if they are valuable for querying latency/filtering (e.g., "http.status_code"). High cardinality data belongs in Logs, not Spans attributes (usually).
 
-func (s *OrderService) ProcessOrder(ctx context.Context, orderID string) error {
-    ctx, span := s.tracer.Start(ctx, "ProcessOrder")
+```go
+func ProcessOrder(ctx context.Context, orderID string) error {
+    // 1. Get Named Tracer
+    tracer := app.Tracer("order.processor")
+    
+    // 2. Start Span
+    ctx, span := tracer.Start(ctx, "ProcessOrder")
+    // 3. Ensure End
     defer span.End()
     
-    s.log.Info(ctx, "processing order", fields.TxHash(orderID))
+    // 4. Enrich Span
+    span.SetAttributes(attribute.String("order.id", orderID))
     
-    // ... business logic
+    // ... work ...
+    
+    if err := validate(ctx); err != nil {
+        // 5. Record Errors in Span
+        span.RecordError(err)
+        span.SetStatus(codes.Error, "validation failed")
+        return err
+    }
     
     return nil
 }
@@ -635,14 +283,118 @@ func (s *OrderService) ProcessOrder(ctx context.Context, orderID string) error {
 
 ---
 
-## Performance
+## Common Configurations
 
-| Scenario | Time | Allocations |
-|----------|------|-------------|
-| Info (no fields) | ~10ns | 0 |
-| Info (3 fields) | ~90ns | 1 |
-| Debug (filtered) | ~3ns | 0 |
-| With trace context | ~150ns | 1-2 |
+Recipes for standard deployment scenarios.
+
+### 1. Local Development
+**Goal**: readable logs, no external dependencies.
+```go
+// Pretty print to console, Debug level enabled
+cfg := ion.Development()
+```
+
+### 2. Production Node
+**Goal**: machine-readable JSON, structured errors, persistent file logs.
+```go
+cfg := ion.Default()
+cfg.Level = "info"
+cfg.Console.Format = "json"
+cfg.File.Enabled = true
+cfg.File.Path = "/var/log/ion/service.log"
+```
+
+### 3. Distributed Cluster
+**Goal**: centralized tracing and high-volume logging.
+```go
+cfg := ion.Default()
+cfg.OTEL.Enabled = true
+cfg.OTEL.Endpoint = "otel-collector.infra.svc:4317"
+cfg.Tracing.Enabled = true
+cfg.Tracing.Sampler = "ratio:0.1" // Sample 10% of traffic
+```
+
+---
+
+## HTTP & gRPC Integration
+
+Ion provides specialized middleware/interceptors to automate context propagation.
+
+### HTTP Middleware (`middleware/ionhttp`)
+
+```go
+import "github.com/JupiterMetaLabs/ion/middleware/ionhttp"
+
+mux := http.NewServeMux()
+handler := ionhttp.Handler(mux, "payment-api") 
+http.ListenAndServe(":8080", handler)
+```
+
+### gRPC Interceptors (`middleware/iongrpc`)
+
+```go
+import "github.com/JupiterMetaLabs/ion/middleware/iongrpc"
+
+// Server
+s := grpc.NewServer(
+    grpc.StatsHandler(iongrpc.ServerHandler()),
+)
+
+// Client
+conn, err := grpc.Dial(addr, 
+    grpc.WithStatsHandler(iongrpc.ClientHandler()),
+)
+```
+
+---
+
+## Production Failure Modes
+
+Operators must understand how Ion behaves under stress:
+
+*   **OTEL Collector Down**: The internal exporter will retry with exponential backoff. If buffers fill, **new traces will be dropped**. Application performance is preserved (failure is isolated).
+*   **Disk Full (File Logging)**: `lumberjack` rotation will attempt to write. If the write syscall fails, Zap internal error handling catches it. The application continues, but logs are lost (written to stderr fallback if possible).
+*   **High Load**: Tracing uses a batch processor. Under extreme load, if the export rate lags generation, spans are dropped to prevent memory leaks (bounded buffer).
+
+---
+
+## Globals & Dependency Injection
+
+> **⚠️ WARNING**: Global state is strictly for migration and legacy support.
+
+**Do not** use `ion.SetGlobal` in new libraries or microservices.
+**Do** inject `ion.Logger` via struct constructors.
+
+```go
+// CORRECT: Dependency Injection
+type Server struct {
+    log ion.Logger
+}
+
+// INCORRECT: Hidden dependency
+func (s *Server) Handle() {
+    ion.Info(...) // Relies on global state
+}
+```
+
+If `ion.GetGlobal()` is called without initialization, it returns a **safe no-op logger**. It will not panic, but your logs will be silently discarded to protect the runtime.
+
+---
+
+## Best Practices
+
+1.  **Pass Context Everywhere**: `context.Background()` breaks the trace chain. Only use it in `main` or background worker roots.
+2.  **Shutdown is Mandatory**: Failing to call `Shutdown` guarantees data loss (buffered traces/logs) on deployment.
+3.  **Structured Keys**: Use consistent key names (e.g., `user_id`, not `userID` or `uid`) to make logs queryable.
+4.  **No Dynamic Keys**: `ion.String(userInput, "value")` is a security risk and breaks indexing. Keys must be static constants.
+
+---
+
+## Versioning
+
+*   **Public API**: `ion.go`, `logger.go`, `config.go`. Stable v0.2.
+*   **Internal**: `internal/*`. No stability guarantees.
+*   **Behavior**: Log format changes or configuration defaults are considered breaking changes.
 
 ---
 

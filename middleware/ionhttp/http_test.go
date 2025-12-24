@@ -1,4 +1,4 @@
-package http
+package ionhttp
 
 import (
 	"net/http"
