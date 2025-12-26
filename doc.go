@@ -1,36 +1,21 @@
-// Package ion provides an enterprise-grade structured logger tailored for JupiterMeta blockchain services.
+// Package ion provides production-grade logging and tracing for Go services.
 //
-// It wraps the high-performance Zap logger and OpenTelemetry (OTEL) for observability, offering a simple
-// yet powerful API for consistent logging across microservices.
+// Ion unifies structured logging (Zap) and distributed tracing
+// (OpenTelemetry) behind a minimal, context-first API.
 //
-// # Key Features
+// # Guarantees
 //
-//   - Zero-allocation hot paths using a custom Zap core.
-//   - Built-in OpenTelemetry (OTEL) integration for log export.
-//   - Automatic context propagation (Trace ID, Span ID).
-//   - Specialized field helpers for blockchain primitives (TxHash, Slot, ShardID).
-//   - Configurable output formats (JSON for production, Pretty for development).
-//   - Log rotation and compression via lumberjack.
+//   - Process Safety: Ion never terminates the process (no os.Exit, no panic).
+//   - Concurrency: All Logger and Tracer APIs are safe for concurrent use.
+//   - Failure Isolation: Telemetry backend failures never crash application logic.
+//   - Lifecycle: Shutdown(ctx) flushes all buffers on a best-effort basis.
 //
-// # Basic Usage
+// # Architecture
 //
-// Initialize the logger with a configuration:
+//   - Logs: Synchronous, structured, strongly typed.
+//   - Traces: Asynchronous, sampled, batched.
+//   - Correlation: Automatic injection of trace_id/span_id from context.Context.
 //
-//	import "github.com/JupiterMetaLabs/ion"
-//
-//	func main() {
-//	    logger := ion.New(ion.Default())
-//	    defer logger.Sync()
-//
-//	    logger.Info("application started", ion.F("version", "1.0.0"))
-//	}
-//
-// # Context Support
-//
-// Use FromContext or WithContext to automatically attach trace identifiers:
-//
-//	func HandleRequest(ctx context.Context) {
-//	    // Extracts trace_id and span_id if present in ctx
-//	    logger.WithContext(ctx).Info("processing request", ion.F("user_id", 123))
-//	}
+// Ion is designed for long-running services and distributed systems.
+// It is not a metrics SDK or a web framework.
 package ion

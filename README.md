@@ -1,299 +1,402 @@
 # Ion
 
-**Ion** is an enterprise-grade, structured logging library designed for high-performance blockchain applications at [JupiterMeta Labs](https://github.com/JupiterMetaLabs).
+**Ion** is an enterprise-grade observability client for Go services. It unifies **structured logging** (Zap) and **distributed tracing** (OpenTelemetry) into a single, cohesive API designed for high-throughput, long-running infrastructure.
 
-It combines the raw speed of [Zap](https://github.com/uber-go/zap) with seamless [OpenTelemetry (OTEL)](https://opentelemetry.io/) integration, ensuring your logs are both fast and observable.
+> **Status:** v0.2 Release Candidate  
+> **Target:** Microservices, Blockchain Nodes, Distributed Systems
 
-## Features
+---
 
--   🚀 **High Performance**: Built on Uber's Zap with a custom **Zero-Allocation** core for hot paths.
--   🔭 **OpenTelemetry Native**: Seamless integration with OTEL for distributed tracing (Logs + Traces).
--   🛡️ **Enterprise Grade**: Reliable `Shutdown` hooks, internal pooling, and safe concurrency patterns.
--   🔗 **Blockchain Ready**: Specialized field helpers for `TxHash`, `Slot`, `ShardID`, and more.
--   📝 **Developer Friendly**: Pretty console output for local dev, JSON for production.
--   🔄 **Lumberjack**: Built-in file rotation and compression.
+## Guarantees & Design Invariants
+
+Ion is built on strict operational guarantees. Operators can rely on these invariants in production:
+
+1.  **No Process Termination**: Ion will **never** call `os.Exit`, `panic`, or `log.Fatal`. Even `Critical` level logs are strictly informational (mapped to FATAL severity) and guarantee control flow returns to the caller.
+2.  **Thread Safety**: All public APIs on `Logger` and `Tracer` are safe for concurrent use by multiple goroutines.
+3.  **Non-Blocking Telemetry**: Trace export is asynchronous and decoupled from application logic. A slow OTEL collector will never block your business logic (logs are synchronous to properly handle crash reporting, but rely on high-performance buffered writes).
+4.  **Failure Isolation**: Telemetry backend failures (e.g., Collector down) are isolated. They may result in data loss (dropped spans) but will **never** crash the service.
+
+## Non-Goals
+
+To maintain focus and stability, Ion explicitly avoids:
+*   **Metrics**: Use the Prometheus or OpenTelemetry Metrics SDKs directly.
+*   **Alerting**: Ion emits signals; it does not manage thresholds or paging.
+*   **Framework Magic**: Ion does not auto-inject into HTTP handlers without explicit middleware usage.
+
+---
+
+## Operational Model
+
+### How Ion Works
+*   **Logs**: Emitted **synchronously** to the configured cores (Console/File/Memory). This ensures that if your application crashes immediately after a log statement, the log is persisted (up to OS buffering).
+*   **Traces**: Buffered and exported **asynchronously**. Spans are batched in memory and sent to the configured OTEL, endpoint on a timer or size threshold.
+*   **Correlation**: `trace_id` and `span_id` are extracted from `context.Context` at the moment of logging and injected as fields.
+
+### When to Use Logs vs Traces
+*   **Logs**: Use for **state changes**, **errors**, and **high-cardinality events** (e.g., specific transaction failure reasons). Logs must be reliable and available immediately.
+*   **Traces**: Use for **latency analysis**, **causality** (who called whom), and **request flows**. Traces are sampled and statistically significant, but individual traces may be dropped under load.
+
+---
 
 ## Installation
 
 ```bash
 go get github.com/JupiterMetaLabs/ion
 ```
+Requires Go 1.21+.
 
-## Usage Patterns
+---
 
-### 1. The Singleton Pattern (Recommended for Apps)
-For most applications, setting a global logger instance is the most convenient approach. It allows you to log from any package without passing a logger variable through every function signature.
+## Quick Start
+
+A minimal, correct example for a production service.
 
 ```go
+package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "github.com/JupiterMetaLabs/ion"
+)
+
 func main() {
-    // Automatically configure from env vars (LOG_LEVEL, SERVICE_NAME, OTEL_ENDPOINT)
-    ion.SetGlobal(ion.InitFromEnv())
-    defer ion.Sync()
+    ctx := context.Background()
 
-    ion.Info("starting application")
-    RunServer()
-}
+    // 1. Initialize with Service Identity
+    // Returns warning slice for non-fatal config issues (e.g. invalid OTEL url)
+    app, warnings, err := ion.New(ion.Default().WithService("payment-node"))
+    if err != nil {
+        log.Fatalf("Fatal: failed to init observability: %v", err)
+    }
+    for _, w := range warnings {
+        log.Printf("Ion Startup Warning: %v", w)
+    }
 
-func RunServer() {
-    // Use the package-level helpers
-    ion.Info("server listening on :8080")
-}
-```
+    // 2. Establishing the Lifecycle Contract
+    // Ensure logs/traces flush before exit.
+    defer func() {
+        shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        defer cancel()
+        // Errors here mean data loss, not application failure.
+        if err := app.Shutdown(shutdownCtx); err != nil {
+            log.Printf("Shutdown data loss: %v", err)
+        }
+    }()
 
-### 2. The Dependency Injection Pattern (Recommended for Libraries)
-If you are building a library or prefer explicit dependencies, you can create and pass the `ion.Logger` interface.
-
-```go
-type Server struct {
-    logger ion.Logger
-}
-
-func NewServer(l ion.Logger) *Server {
-    return &Server{logger: l}
-}
-
-func (s *Server) Start() {
-    s.logger.Info("server started")
-}
-```
-
-## Advanced Features
-
-### Child Loggers (`With` and `Named`)
-You can create scoped "child" loggers that inherit configuration but add specific context.
-
-*   **`With`**: Adds permanent fields to every log entry from that child.
-*   **`Named`**: Adds a "logger" name (usually used to identify a component/module).
-
-```go
-// Create a sub-logger for the "database" component
-dbLogger := logger.Named("db").With(ion.String("db_name", "orders"))
-
-dbLogger.Info("connection established") 
-// Output: {"level":"info", "logger":"db", "db_name":"orders", "msg":"..."}
-```
-
-### Context Integration (`WithContext`)
-Ion integrates deeply with `context.Context` to extract OpenTelemetry `trace_id` and `span_id` automatically.
-
-```go
-func HandleRequest(ctx context.Context) {
-    // Creates a child logger that automatically extracts trace information from ctx
-    l := ion.WithContext(ctx)
+    // 3. Application Logic
+    app.Info(ctx, "node started", ion.String("version", "1.0.0"))
     
-    l.Info("processing request")
-    // Output will include "trace_id" and "span_id" if they exist in ctx
+    // Simulate work
+    doWork(ctx, app)
+}
+
+func doWork(ctx context.Context, logger ion.Logger) {
+    // Context is mandatory for correlation
+    logger.Info(ctx, "processing block", ion.Uint64("height", 100))
 }
 ```
 
-### With Context (Tracing)
+---
 
-Ion automatically correlates logs with distributed traces if a context is provided.
+## Configuration Reference
 
-```go
-func HandleRequest(ctx context.Context) {
-    // If ctx contains OTEL trace info, it will be added to the log
-    logger.WithContext(ctx).Info("processing transaction",
-        ion.F("user_id", "u_12345"),
-    )
-}
-```
+Ion uses a comprehensive configuration struct for behavior control. This maps 1:1 with `ion.Config`.
 
-### Configuration
+### Root Configuration (`ion.Config`)
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Level` | `string` | `"info"` | Minimum log level (`debug`, `info`, `warn`, `error`, `fatal`). |
+| `Development` | `bool` | `false` | Enables development mode (pretty output, caller location, stack traces). |
+| `ServiceName` | `string` | `"unknown"` | Identity of the service (vital for trace attribution). |
+| `Version` | `string` | `""` | Service version (e.g., commit hash or semver). |
+| `Console` | `ConsoleConfig` | `Enabled: true` | configuration for stdout/stderr. |
+| `File` | `FileConfig` | `Enabled: false` | configuration for file logging (with rotation). |
+| `OTEL` | `OTELConfig` | `Enabled: false` | configuration for remote OpenTelemetry logging. |
+| `Tracing` | `TracingConfig` | `Enabled: false` | configuration for Distributed Tracing. |
 
-Ion uses a strongly typed `Config` struct. You can load it from code or environment variables.
+### Console Configuration (`ion.ConsoleConfig`)
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Enabled` | `bool` | `true` | If false, stdout/stderr is silenced. |
+| `Format` | `string` | `"json"` | `"json"` (production) or `"pretty"` (human-readable). |
+| `Color` | `bool` | `true` | Enables ANSI colors (only references `pretty` format). |
+| `ErrorsToStderr` | `bool` | `true` | Writes `warn`/`error`/`fatal` to stderr, others to stdout. |
 
-```go
-cfg := ion.Default()
+### File Configuration (`ion.FileConfig`)
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Enabled` | `bool` | `false` | Enables file writing. |
+| `Path` | `string` | `""` | Absolute path to the log file (e.g., `/var/log/app.log`). |
+| `MaxSizeMB` | `int` | `100` | Max size per file before rotation. |
+| `MaxBackups` | `int` | `5` | Number of old files to keep. |
+| `MaxAgeDays` | `int` | `7` | Max age of files to keep. |
+| `Compress` | `bool` | `true` | Gzip old log files. |
 
-// Override with env vars or manual settings
-cfg.Level = "debug"
-cfg.ServiceName = "payment-service"
-cfg.OTEL.Enabled = true
-cfg.OTEL.Endpoint = "otel-collector:4317"
+### OTEL Configuration (`ion.OTELConfig`)
+Controls the OpenTelemetry **Logs** Exporter.
 
-logger := ion.New(cfg)
-```
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Enabled` | `bool` | `false` | Enables log export to Collector. |
+| `Endpoint` | `string` | `""` | `host:port` (e.g., `localhost:4317`). |
+| `Protocol` | `string` | `"grpc"` | `"grpc"` (recommended) or `"http"`. |
+| `Insecure` | `bool` | `false` | If true, disables TLS (dev only). |
+| `Username` | `string` | `""` | Basic Auth Username. |
+| `Password` | `string` | `""` | Basic Auth Password. |
+| `BatchSize` | `int` | `512` | Max logs per export batch. |
+| `ExportInterval` | `Duration` | `5s` | flush interval. |
 
-### Production Configuration
+### Tracing Configuration (`ion.TracingConfig`)
+Controls the OpenTelemetry **Trace** Provider.
 
-For enterprise deployments, you should utilize the full configuration power (Files, Rotation, OTEL):
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Enabled` | `bool` | `false` | Enables trace generation and export. |
+| `Endpoint` | `string` | `""` | `host:port`. Defaults to `OTEL.Endpoint` if empty. |
+| `Sampler` | `string` | `"always"` | `"always"`, `"never"`, or `"ratio:0.X"` (e.g., `ratio:0.1` for 10%). |
+| `Protocol` | `string` | `"grpc"` | `"grpc"` or `"http"`. |
+
+---
+
+## Detailed Initialization
+
+For full control, initialize the struct directly rather than using builders.
 
 ```go
 cfg := ion.Config{
     Level:       "info",
-    Development: false,      // JSON format
     ServiceName: "payment-service",
+    Version:     "v1.2.3",
     
-    // File Logging with Rotation (Lumberjack)
-    File: &ion.FileConfig{
+    Console: ion.ConsoleConfig{
+        Enabled:        true,
+        Format:         "json",
+        ErrorsToStderr: true,
+    },
+    
+    // File rotation
+    File: ion.FileConfig{
         Enabled:    true,
-        Path:       "/var/log/app/service.log",
-        MaxSize:    100, // MB
-        MaxBackups: 10,
+        Path:       "/var/log/payment-service.log",
+        MaxSizeMB:  500,
+        MaxBackups: 3,
         Compress:   true,
     },
-
-    // OpenTelemetry Export
-    OTEL: &ion.OTELConfig{
+    
+    // Remote Telemetry (OTEL)
+    OTEL: ion.OTELConfig{
         Enabled:  true,
-        Endpoint: "otel-collector:4317", // gRPC by default
+        Endpoint: "otel-collector.prod:4317",
         Protocol: "grpc",
-        Username: "admin",        // Optional Basic Auth
-        Password: "supersecret",  // Optional Basic Auth
-        Headers: map[string]string{ // Optional custom headers
-            "X-Custom-Token": "value",
-        },
-        BatchSize: 1000,
+        // Attributes added to every log
         Attributes: map[string]string{
-            "env": "production",
+            "cluster": "us-east-1",
+            "env":     "production",
         },
     },
+    
+    // Distributed Tracing
+    Tracing: ion.TracingConfig{
+        Enabled: true,
+        // Fallback to OTEL.Endpoint is automatic if this is empty
+        Sampler: "ratio:0.05", // Sample 5% of traces
+    },
 }
-logger, _ := ion.NewWithOTEL(cfg)
-defer logger.Shutdown(ctx)
+
+// Initialize
+app, warnings, err := ion.New(cfg)
+if err != nil {
+    panic(err)
+}
+// Handle warnings (e.g., invalid sampler string fallback)
+for _, w := range warnings {
+    log.Println("Ion config warning:", w)
+}
+defer app.Shutdown(context.Background())
 ```
 
-## 🏗️ Recommended Usage for Teams
+---
 
-### 1. Dependency Injection (Preferred)
-Pass the `ion.Logger` explicitly to your components. This makes testing easier and dependencies clear.
+## Proper Usage Guide
+
+### 1. The Logger
+Use the Logger for human-readable events, state changes, and errors.
+
+*   **Always** pass `context.Context` (even if generic).
+*   **Prefer** typed fields (`ion.String`) over generic `ion.F`.
+*   **Do not** log sensitive data (PII/Secrets).
 
 ```go
+// INFO: Operational state changes
+app.Info(ctx, "transaction processed", 
+    ion.String("tx_id", "0x123"),
+    ion.Duration("latency", 50 * time.Millisecond),
+)
+
+// ERROR: Actionable failures. Does not interrupt flow.
+if err != nil {
+    // Automatically adds "error": err.Error() field
+    app.Error(ctx, "database connection failed", err, ion.String("db_host", "primary"))
+}
+
+// CRITICAL: Invariant violations (e.g. data corruption).
+// Use this for "wake up the on-call" events.
+// GUARANTEE: Does NOT call os.Exit(). Safe to use in libraries.
+app.Critical(ctx, "memory corruption detected", nil)
+```
+
+### 2. The Tracer
+Use the Tracer for latency measurement and causal chains.
+
+*   **Start/End**: Every `Start` **MUST** have a corresponding `End()`.
+*   **Defer**: Use `defer span.End()` immediately after checking `err` isn't nil (or just immediately if function is simple).
+*   **Attributes**: Add attributes to spans *only* if they are valuable for querying latency/filtering (e.g., "http.status_code"). High cardinality data belongs in Logs, not Spans attributes (usually).
+
+```go
+func ProcessOrder(ctx context.Context, orderID string) error {
+    // 1. Get Named Tracer
+    tracer := app.Tracer("order.processor")
+    
+    // 2. Start Span
+    ctx, span := tracer.Start(ctx, "ProcessOrder")
+    // 3. Ensure End
+    defer span.End()
+    
+    // 4. Enrich Span
+    span.SetAttributes(attribute.String("order.id", orderID))
+    
+    // ... work ...
+    
+    if err := validate(ctx); err != nil {
+        // 5. Record Errors in Span
+        span.RecordError(err)
+        span.SetStatus(codes.Error, "validation failed")
+        return err
+    }
+    
+    return nil
+}
+```
+
+---
+
+## Common Configurations
+
+Recipes for standard deployment scenarios.
+
+### 1. Local Development
+**Goal**: readable logs, no external dependencies.
+```go
+// Pretty print to console, Debug level enabled
+cfg := ion.Development()
+```
+
+### 2. Production Node
+**Goal**: machine-readable JSON, structured errors, persistent file logs.
+```go
+cfg := ion.Default()
+cfg.Level = "info"
+cfg.Console.Format = "json"
+cfg.File.Enabled = true
+cfg.File.Path = "/var/log/ion/service.log"
+```
+
+### 3. Distributed Cluster
+**Goal**: centralized tracing and high-volume logging.
+```go
+cfg := ion.Default()
+cfg.OTEL.Enabled = true
+cfg.OTEL.Endpoint = "otel-collector.infra.svc:4317"
+cfg.Tracing.Enabled = true
+cfg.Tracing.Sampler = "ratio:0.1" // Sample 10% of traffic
+```
+
+---
+
+## HTTP & gRPC Integration
+
+Ion provides specialized middleware/interceptors to automate context propagation.
+
+### HTTP Middleware (`middleware/ionhttp`)
+
+```go
+import "github.com/JupiterMetaLabs/ion/middleware/ionhttp"
+
+mux := http.NewServeMux()
+handler := ionhttp.Handler(mux, "payment-api") 
+http.ListenAndServe(":8080", handler)
+```
+
+### gRPC Interceptors (`middleware/iongrpc`)
+
+```go
+import "github.com/JupiterMetaLabs/ion/middleware/iongrpc"
+
+// Server
+s := grpc.NewServer(
+    grpc.StatsHandler(iongrpc.ServerHandler()),
+)
+
+// Client
+conn, err := grpc.Dial(addr, 
+    grpc.WithStatsHandler(iongrpc.ClientHandler()),
+)
+```
+
+---
+
+## Production Failure Modes
+
+Operators must understand how Ion behaves under stress:
+
+*   **OTEL Collector Down**: The internal exporter will retry with exponential backoff. If buffers fill, **new traces will be dropped**. Application performance is preserved (failure is isolated).
+*   **Disk Full (File Logging)**: `lumberjack` rotation will attempt to write. If the write syscall fails, Zap internal error handling catches it. The application continues, but logs are lost (written to stderr fallback if possible).
+*   **High Load**: Tracing uses a batch processor. Under extreme load, if the export rate lags generation, spans are dropped to prevent memory leaks (bounded buffer).
+
+---
+
+## Globals & Dependency Injection
+
+> **⚠️ WARNING**: Global state is strictly for migration and legacy support.
+
+**Do not** use `ion.SetGlobal` in new libraries or microservices.
+**Do** inject `ion.Logger` via struct constructors.
+
+```go
+// CORRECT: Dependency Injection
 type Server struct {
     log ion.Logger
 }
 
-func NewServer(l ion.Logger) *Server {
-    return &Server{
-        log: l.With("component", "server"), // Attach context once
-    }
+// INCORRECT: Hidden dependency
+func (s *Server) Handle() {
+    ion.Info(...) // Relies on global state
 }
 ```
 
-### 2. Global Singleton (Refactoring / Scripts)
-For legacy codebases or simple scripts where passing the logger is difficult, use the global singleton.
+If `ion.GetGlobal()` is called without initialization, it returns a **safe no-op logger**. It will not panic, but your logs will be silently discarded to protect the runtime.
 
-```go
-// In main.go
-ion.SetGlobal(logger)
+---
 
-// In package foo
-func Bar() {
-    // Uses the globally configured logger
-    ion.L().Info("something happened")
-}
-```
+## Best Practices
 
-## 🚀 Performance Tips
+1.  **Pass Context Everywhere**: `context.Background()` breaks the trace chain. Only use it in `main` or background worker roots.
+2.  **Shutdown is Mandatory**: Failing to call `Shutdown` guarantees data loss (buffered traces/logs) on deployment.
+3.  **Structured Keys**: Use consistent key names (e.g., `user_id`, not `userID` or `uid`) to make logs queryable.
+4.  **No Dynamic Keys**: `ion.String(userInput, "value")` is a security risk and breaks indexing. Keys must be static constants.
 
-Ion is designed for high-performance zero-allocation logging. To maximize speed:
+---
 
-1.  **Use Typed Constructors**: Always use `ion.Int`, `ion.String`, `ion.Bool` instead of `ion.F`.
-    *   `ion.String("key", "val")` -> **0 allocations**
-    *   `ion.F("key", "val")` -> **1 allocation** (boxing to `any`)
-### 3. Lifecycle & Runtime Configuration
+## Versioning
 
-#### Graceful Shutdown
-Always ensure you flush logs before your application exits to prevent data loss (especially for OTEL traces).
+*   **Public API**: `ion.go`, `logger.go`, `config.go`. Stable v0.2.
+*   **Internal**: `internal/*`. No stability guarantees.
+*   **Behavior**: Log format changes or configuration defaults are considered breaking changes.
 
-```go
-// In main()
-logger, _ := ion.NewWithOTEL(cfg)
-// Use a timeout context to ensure we don't hang if OTEL collector is down
-ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-defer cancel()
-defer logger.Shutdown(ctx)
-```
-
-#### Runtime Configuration (Dynamic Level)
-Ion supports changing the log level at runtime without restarting the application. This is thread-safe.
-
-```go
-// Safe to call concurrently
-logger.SetLevel("debug") 
-// Later...
-logger.SetLevel("info")
-```
-
-#### Hot Reloading (Initialization Pattern)
-A common pattern for applications is to start with a basic logger, load configuration, and then upgrade to a production logger.
-
-```go
-func main() {
-    // 1. Start with a safe default (Console, Info)
-    ion.SetGlobal(ion.New(ion.Default()))
-
-    // 2. Load Configuration (e.g., from YAML or Env)
-    appConfig := LoadConfig()
-
-    // 3. Initialize Production Logger (File, OTEL, etc.)
-    prodLogger, err := ion.NewWithOTEL(appConfig.Log)
-    if err != nil {
-        ion.L().Fatal("failed to init logger", err)
-    }
-
-    // 4. Replace Global Logger
-    ion.SetGlobal(prodLogger)
-    
-    // 5. Run App
-    RunApp(ion.L())
-}
-```
-
-## 🚀 Performance Tips
-
-Ion is designed for high-performance zero-allocation logging. To maximize speed:
-
-1.  **Use Typed Constructors**: Always use `ion.Int`, `ion.String`, `ion.Bool` instead of `ion.F`.
-    *   `ion.String("key", "val")` -> **0 allocations**
-    *   `ion.F("key", "val")` -> **1 allocation** (boxing to `any`)
-2.  **Sync vs Shutdown**: `logger.Sync()` only flushes the local buffer. `logger.Shutdown(ctx)` flushes **everything** (including OTEL) and closes connections. Use `Shutdown` on exit.
-
-The `Config` struct maps to YAML/JSON and Environment Variables.
-
-| Field | Env Var | Default | Description |
-|-------|---------|---------|-------------|
-| `level` | `LOG_LEVEL` | `info` | Minimum log level (`debug`, `info`, `warn`, `error`). |
-| `development` | `LOG_DEVELOPMENT` | `false` | Enables pretty printing, stack traces, and caller info. |
-| `service_name` | `SERVICE_NAME` | `unknown` | Name of the service for OTEL traces. |
-| `version` | `SERVICE_VERSION` | `""` | Service version for OTEL. |
-| **Console** | | | |
-| `console.enabled` | - | `true` | Enable stdout/stderr output. |
-| `console.format` | - | `json` | `json` or `pretty`. |
-| `console.color` | - | `true` | Enable ANSI colors in `pretty` mode. |
-| `console.errors_to_stderr` | - | `true` | Send warn/error/fatal to stderr. |
-| **File** | | | |
-| `file.enabled` | - | `false` | Enable writing to a log file. |
-| `file.path` | - | `""` | Absolute path to the log file. |
-| `file.max_size_mb` | - | `100` | Rotate after N megabytes. |
-| `file.max_backups` | - | `5` | Keep N old files. |
-| `file.max_age_days` | - | `7` | Keep files for N days. |
-| `file.compress` | - | `true` | Gzip rotated files. |
-| **OTEL** | | | |
-| `otel.enabled` | - | `false` | Enable OpenTelemetry export. |
-| `otel.endpoint` | `OTEL_ENDPOINT`* | `""` | Collector address (e.g., `localhost:4317`). |
-| `otel.protocol` | - | `grpc` | `grpc` or `http`. |
-| `otel.insecure` | - | `false` | Disable TLS (use for local collectors). |
-| `otel.username` | `OTEL_USERNAME` | `""` | Basic Auth username (optional). |
-| `otel.password` | `OTEL_PASSWORD` | `""` | Basic Auth password (optional). |
-| `otel.headers` | - | `{}` | Custom headers (map, for Bearer tokens, etc.). |
-| `otel.timeout` | - | `10s` | Export timeout. |
-| `otel.batch_size` | - | `512` | Max logs per batch. |
-| `otel.export_interval`| - | `5s` | Flush interval. |
-| `otel.attributes` | - | `{}` | Extra resource attributes (map). |
-
-> *`OTEL_ENDPOINT` is only read by `InitFromEnv()`, not automatically by the struct.
-
-
-
-
-## Architecture
-
-Ion is designed as a wrapper around `zap.Logger`. It injects a custom Core for OTEL integration that does not impede the performance of local logging.
-
--   **Console/File**: Handled directly by Zap.
--   **OTEL**: Handled by an asynchronous batch processor to avoid blocking the application.
+---
 
 ## License
 

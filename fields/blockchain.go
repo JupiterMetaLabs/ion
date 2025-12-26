@@ -42,7 +42,7 @@ func TxType(txType string) ion.Field {
 
 // BlockHeight creates a block height field.
 func BlockHeight(height uint64) ion.Field {
-	return ion.Int64("block_height", int64(height))
+	return ion.Uint64("block_height", height)
 }
 
 // BlockHash creates a block hash field.
@@ -52,12 +52,12 @@ func BlockHash(hash string) ion.Field {
 
 // Slot creates a slot number field (Solana).
 func Slot(slot uint64) ion.Field {
-	return ion.Int64("slot", int64(slot))
+	return ion.Uint64("slot", slot)
 }
 
 // Epoch creates an epoch field.
 func Epoch(epoch uint64) ion.Field {
-	return ion.Int64("epoch", int64(epoch))
+	return ion.Uint64("epoch", epoch)
 }
 
 // --- Chain Context Fields ---
@@ -192,4 +192,53 @@ func Enabled(on bool) ion.Field {
 // Reason creates a reason field (for failures/decisions).
 func Reason(r string) ion.Field {
 	return ion.String("reason", r)
+}
+
+// --- Error Fields ---
+
+// ErrorMsg creates an error message field for non-fatal error logging.
+// Use this when logging at Warn level where the error parameter isn't available.
+// For Error level, prefer using the error parameter: log.Error(ctx, msg, err, ...)
+func ErrorMsg(err error) ion.Field {
+	if err == nil {
+		return ion.String("error", "")
+	}
+	return ion.String("error", err.Error())
+}
+
+// --- Transaction Fields (Extended) ---
+
+// Nonce creates a transaction nonce field.
+func Nonce(n uint64) ion.Field {
+	return ion.Uint64("nonce", n)
+}
+
+// GasLimit creates a gas limit field.
+func GasLimit(limit uint64) ion.Field {
+	return ion.Uint64("gas_limit", limit)
+}
+
+// GasPrice creates a gas price field (in smallest unit, e.g., wei).
+func GasPrice(price uint64) ion.Field {
+	return ion.Uint64("gas_price", price)
+}
+
+// GasUsed creates a gas used field.
+func GasUsed(used uint64) ion.Field {
+	return ion.Uint64("gas_used", used)
+}
+
+// Value creates a transaction value field.
+func Value(val string) ion.Field {
+	return ion.String("value", val)
+}
+
+// FromAddress creates a "from" address field.
+func FromAddress(addr string) ion.Field {
+	return ion.String("from_address", addr)
+}
+
+// ToAddress creates a "to" address field.
+func ToAddress(addr string) ion.Field {
+	return ion.String("to_address", addr)
 }
