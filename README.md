@@ -220,6 +220,9 @@ defer app.Shutdown(context.Background())
 
 ---
 
+
+> 📘 **Deep Dive**: For enterprise patterns, advanced tracing, and blockchain-specific examples, see the [Enterprise User Guide](docs/USER_GUIDE.md).
+
 ## Proper Usage Guide
 
 ### 1. The Logger

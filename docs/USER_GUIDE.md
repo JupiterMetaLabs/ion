@@ -238,3 +238,72 @@ func (s *GRPCServer) SendBlock(ctx context.Context, req *SendBlockReq) (*Ack, er
 }
 ```
 
+### 5.4 State Sync (Long-Running Operations)
+Syncing a blockchain node can take hours. A single span cannot last hours (it will time out or consume too much RAM).
+**Pattern**: Use "Linked Spans" for each chunk.
+
+```go
+func (s *Syncer) Sync(ctx context.Context) {
+    // Main "Process" Logger
+    s.log.Info(ctx, "starting state sync")
+    
+    for batch := range s.peer.GetBatches() {
+        // DO NOT create a child span of "Sync" (it would be too long).
+        // Create a NEW Root Span for this batch, but LINK it to the Sync session.
+        
+        tracer := s.tracer
+        // Create a fresh context for the batch
+        spanCtx, span := tracer.Start(context.Background(), "ApplyBatch", 
+            trace.WithLinks(trace.LinkFromContext(ctx)), // Link to main sync job
+            trace.WithAttributes(attribute.Int("batch_id", batch.ID)),
+        )
+        
+        if err := s.apply(spanCtx, batch); err != nil {
+            span.RecordError(err)
+            s.log.Error(spanCtx, "batch failed", err)
+        }
+        span.End() // Ends immediately after batch, freeing memory
+    }
+}
+```
+
+### 5.5 Mempool (High-Volume Logging)
+Mempools process thousands of tx/sec. Logging every tx is too expensive (`Info`).
+**Pattern**: Use `Debug` for individual txs (disabled in prod) and `Info` only for "Batch Summary" or "Invalid Tx".
+
+```go
+func (pool *Mempool) AddTx(ctx context.Context, tx *Tx) error {
+    // 1. Trace: Sampled (e.g. 1% of txs traced)
+    // If not sampled, this is a no-op overhead.
+    ctx, span := pool.tracer.Start(ctx, "AddTx")
+    defer span.End()
+    
+    if err := pool.validate(tx); err != nil {
+        // High Value Log: Why are we rejecting txs?
+        // Use Scoped Logger "ion-node.mempool"
+        pool.log.Warn(ctx, "tx rejected", 
+            ion.String("hash", tx.Hash), 
+            ion.Error(err),
+        )
+        span.RecordError(err)
+        return err
+    }
+    
+    // Low Value Log: 10k/sec
+    // Only visible if Level=Debug
+    pool.log.Debug(ctx, "tx added", ion.String("hash", tx.Hash))
+    
+    return nil
+}
+
+// 2. Periodic Summary (The "Heartbeat" Log)
+// Run this every 5s
+func (pool *Mempool) LogStats(ctx context.Context) {
+    pool.log.Info(ctx, "mempool status",
+        ion.Int("pending_txs", pool.Count()),
+        ion.Int("size_bytes", pool.Size()),
+    )
+}
+```
+
+
