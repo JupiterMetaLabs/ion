@@ -37,6 +37,8 @@ type SpanOption interface {
 type spanOptions struct {
 	kind       trace.SpanKind
 	attributes []attribute.KeyValue
+	links      []trace.Link
+	otelOpts   []trace.SpanStartOption
 }
 
 type kindOption trace.SpanKind
@@ -52,6 +54,21 @@ func (a attrOption) apply(o *spanOptions) { o.attributes = append(o.attributes, 
 
 // WithAttributes adds attributes to the span.
 func WithAttributes(attrs ...attribute.KeyValue) SpanOption { return attrOption(attrs) }
+
+type linkOption []trace.Link
+
+func (l linkOption) apply(o *spanOptions) { o.links = append(o.links, l...) }
+
+// WithLinks adds links to the span.
+func WithLinks(links ...trace.Link) SpanOption { return linkOption(links) }
+
+type otelOption []trace.SpanStartOption
+
+func (t otelOption) apply(o *spanOptions) { o.otelOpts = append(o.otelOpts, t...) }
+
+// WithOTELOptions allows passing raw OpenTelemetry options directly.
+// This is an escape hatch for advanced features not yet wrapped by Ion.
+func WithOTELOptions(opts ...trace.SpanStartOption) SpanOption { return otelOption(opts) }
 
 // --- OTEL Tracer Implementation ---
 
@@ -72,6 +89,12 @@ func (t *otelTracer) Start(ctx context.Context, spanName string, opts ...SpanOpt
 	traceOpts := []trace.SpanStartOption{trace.WithSpanKind(o.kind)}
 	if len(o.attributes) > 0 {
 		traceOpts = append(traceOpts, trace.WithAttributes(o.attributes...))
+	}
+	if len(o.links) > 0 {
+		traceOpts = append(traceOpts, trace.WithLinks(o.links...))
+	}
+	if len(o.otelOpts) > 0 {
+		traceOpts = append(traceOpts, o.otelOpts...)
 	}
 
 	ctx, span := t.tracer.Start(ctx, spanName, traceOpts...)

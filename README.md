@@ -427,7 +427,7 @@ go func(parentCtx context.Context) {
     link := trace.LinkFromContext(parentCtx) 
     
     // 3. Start a new Root Span with the link
-    ctx, span := tracer.Start(newCtx, "AsyncJob", trace.WithLinks(link))
+    ctx, span := tracer.Start(newCtx, "AsyncJob", ion.WithLinks(link))
     defer span.End()
     
     // Now you have a safe, independent span correlated to the original request

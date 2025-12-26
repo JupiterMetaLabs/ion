@@ -133,7 +133,7 @@ func (s *Service) AsyncEmail(reqCtx context.Context) {
     go func() {
         // 2. Start a FRESH root trace
         // This ensures the email trace is complete even if request finishes.
-        ctx, span := s.tracer.Start(context.Background(), "SendEmail", trace.WithLinks(link))
+        ctx, span := s.tracer.Start(context.Background(), "SendEmail", ion.WithLinks(link))
         defer span.End()
         
         // 3. Work...
@@ -254,8 +254,8 @@ func (s *Syncer) Sync(ctx context.Context) {
         tracer := s.tracer
         // Create a fresh context for the batch
         spanCtx, span := tracer.Start(context.Background(), "ApplyBatch", 
-            trace.WithLinks(trace.LinkFromContext(ctx)), // Link to main sync job
-            trace.WithAttributes(attribute.Int("batch_id", batch.ID)),
+            ion.WithLinks(trace.LinkFromContext(ctx)), // Link to main sync job
+            ion.WithAttributes(attribute.Int("batch_id", batch.ID)),
         )
         
         if err := s.apply(spanCtx, batch); err != nil {
