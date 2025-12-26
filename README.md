@@ -287,31 +287,117 @@ func ProcessOrder(ctx context.Context, orderID string) error {
 
 Recipes for standard deployment scenarios.
 
-### 1. Local Development
-**Goal**: readable logs, no external dependencies.
-```go
-// Pretty print to console, Debug level enabled
-cfg := ion.Development()
-```
+---
 
-### 2. Production Node
-**Goal**: machine-readable JSON, structured errors, persistent file logs.
+## Initialization Scenarios
+
+Ion is flexible. Here are the core patterns for different environments.
+
+### 1. The "Standard" (Console Only)
+Best for: CLI tools, scripts, local testing.
 ```go
 cfg := ion.Default()
-cfg.Level = "info"
-cfg.Console.Format = "json"
+cfg.Level = "info" 
+// cfg.Development = true // Optional: enables callers / stacktraces
+```
+
+### 2. The "Boxed Service" (Console + File)
+Best for: Systemd services, VM-based deployments, legacy nodes.
+```go
+cfg := ion.Default()
+// Console for live tailing (kubectl logs)
+cfg.Console.Enabled = true 
+// File for long-term retention
 cfg.File.Enabled = true
-cfg.File.Path = "/var/log/ion/service.log"
+cfg.File.Path = "/var/log/app/app.log"
+cfg.File.MaxSizeMB = 500
+cfg.File.MaxBackups = 5
 ```
 
-### 3. Distributed Cluster
-**Goal**: centralized tracing and high-volume logging.
+### 3. The "Silent Agent" (OTEL Only)
+Best for: High-traffic sidecars where local IO is expensive.
 ```go
 cfg := ion.Default()
+cfg.Console.Enabled = false // Disable local IO
 cfg.OTEL.Enabled = true
-cfg.OTEL.Endpoint = "otel-collector.infra.svc:4317"
-cfg.Tracing.Enabled = true
-cfg.Tracing.Sampler = "ratio:0.1" // Sample 10% of traffic
+cfg.OTEL.Endpoint = "localhost:4317"
+cfg.OTEL.Protocol = "grpc"
+```
+
+### 4. The "Full Stack" (Console + OTEL + Tracing)
+Best for: Kubernetes microservices.
+```go
+cfg := ion.Default()
+cfg.Console.Enabled = true       // For pod logs
+cfg.OTEL.Enabled = true          // For log aggregation (Loki/Elastic)
+cfg.OTEL.Endpoint = "otu-col:4317"
+
+cfg.Tracing.Enabled = true       // For distributed traces (Tempo/Jaeger)
+cfg.Tracing.Sampler = "ratio:0.1" // 10% sampling
+```
+
+---
+
+## 🔍 Tracing Guide for Developers
+
+Distributed tracing is powerful but requires discipline. Follow these rules to get useful traces.
+
+### 1. Span Lifecycle
+*   **Root Spans**: Created by middleware (HTTP/gRPC). You rarely start these manually unless writing a background worker.
+*   **Child Spans**: Created by `Start(ctx, name)`. Always inherit parent ID from `ctx`.
+
+```go
+// 1. Start (creates child if ctx has parent)
+ctx, span := tracer.Start(ctx, "CalculateHash")
+// 2. Defer End (Critical!)
+defer span.End() 
+```
+
+### 2. Attributes vs Events vs Logs
+*   **Attributes**: "Search Tags". Low cardinality. Use for filtering.
+    *   *Good*: `user_id`, `http.status`, `region`, `retry_count`
+    *   *Bad*: `error_message` (too variable), `payload_dump` (too big)
+*   **Events**: "Timestamped Markers". Significant moments inside a span.
+    *   *Example*: `span.AddEvent("cache_miss")`
+*   **Logs**: "Detailed Context". High cardinality. Use `app.Info(ctx, ...)` instead.
+    *   *Why*: Logs are cheaper and searchable by full text.
+
+### 3. Handling Errors in Spans
+Simply returning an error doesn't mark the span as failed. You must be explicit.
+
+```go
+if err != nil {
+    // 1. Record the error details (stack trace, type)
+    span.RecordError(err)
+    // 2. Mark span status as Error (turns it red in UI)
+    span.SetStatus(codes.Error, "database query failed")
+    
+    // 3. Log it (for correlation)
+    app.Error(ctx, "query failed", err)
+    return err
+}
+span.SetStatus(codes.Ok, "success") // Optional
+```
+
+### 4. Spawning Goroutines
+**Crucial**: Context is not thread-safe, but it *is* immutable. Passing `ctx` to `go func()` is safe, BUT the parent span might `End()` before the goroutine finishes.
+*   **Standard**: If the goroutine is part of the request (e.g., parallel fetch), pass `ctx`. Wait for it.
+*   **Fire-and-Forget**: If the goroutine outlives the request, **create a new root link**.
+
+```go
+// Fire-and-Forget Background Task
+go func(parentCtx context.Context) {
+    // Create new link to parent, but new root span
+    newCtx := context.Background()
+    tracer := app.Tracer("background")
+    
+    // Link preserves the "caused by" relationship
+    link := trace.LinkFromContext(parentCtx) 
+    ctx, span := tracer.Start(newCtx, "AsyncJob", trace.WithLinks(link))
+    defer span.End()
+    
+    // ... work ...
+}(ctx)
 ```
 
 ---
