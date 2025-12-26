@@ -248,7 +248,33 @@ if err != nil {
 app.Critical(ctx, "memory corruption detected", nil)
 ```
 
-### 2. The Tracer
+```
+
+### 3. Child Loggers (Scopes)
+Use `With` and `Named` to create context-aware sub-loggers. This is often better than passing raw `ion` fields everywhere.
+
+*   **`Named(name)`**: Appends to the logger name. Good for components.
+    *   `app` -> `app.http` -> `app.http.client`
+*   **`With(fields...)`**: Permanently attaches fields to all logs from this logger.
+
+```go
+// In your constructor
+func NewPaymentService(root ion.Logger) *PaymentService {
+    // All logs from this service will have "service": "payment" and "component": "core"
+    // AND be named "main.payment"
+    log := root.Named("payment").With(ion.String("component", "core"))
+    
+    return &PaymentService{log: log}
+}
+
+func (s *PaymentService) Process(ctx context.Context) {
+    // Log comes out as:
+    // logger="main.payment" component="core" msg="processing"
+    s.log.Info(ctx, "processing") 
+}
+```
+
+### 4. The Tracer
 Use the Tracer for latency measurement and causal chains.
 
 *   **Start/End**: Every `Start` **MUST** have a corresponding `End()`.
@@ -363,40 +389,46 @@ defer span.End()
     *   *Why*: Logs are cheaper and searchable by full text.
 
 ### 3. Handling Errors in Spans
-Simply returning an error doesn't mark the span as failed. You must be explicit.
+**The Problem**: By default, a span finishes as `OK` even if your function returns an error. This results in **0% Error Rate** on your dashboard despite complete failure.
+
+**The Fix**: You must explicitly "taint" the span.
 
 ```go
 if err != nil {
-    // 1. Record the error details (stack trace, type)
+    // 1. Record stacktrace and error type in the span
     span.RecordError(err)
-    // 2. Mark span status as Error (turns it red in UI)
-    span.SetStatus(codes.Error, "database query failed")
+    // 2. Flip the span status to Error (turns red in Jaeger/Tempo)
+    span.SetStatus(codes.Error, "failed to insert order")
     
-    // 3. Log it (for correlation)
-    app.Error(ctx, "query failed", err)
+    // 3. Log it for humans (Logs = Detail, Traces = Signals)
+    app.Error(ctx, "failed to insert order", err)
     return err
 }
-span.SetStatus(codes.Ok, "success") // Optional
+// Optional: Explicitly mark success if needed, though default is Unset/OK
+span.SetStatus(codes.Ok, "success")
 ```
 
 ### 4. Spawning Goroutines
-**Crucial**: Context is not thread-safe, but it *is* immutable. Passing `ctx` to `go func()` is safe, BUT the parent span might `End()` before the goroutine finishes.
-*   **Standard**: If the goroutine is part of the request (e.g., parallel fetch), pass `ctx`. Wait for it.
-*   **Fire-and-Forget**: If the goroutine outlives the request, **create a new root link**.
+**The Problem**: Spans are bound to `context`. If the parent request finishes, `ctx` is canceled and the parent span Ends. A background goroutine using that same `ctx` becomes a "Ghost Span" — it might log errors, but it has no parent in the trace visualization (disconnected).
+
+**The Fix**: Create a **Link**. A Link connects a new Root Span to the old Parent Trace, saying "This background job was caused by that request", without being killed by it.
 
 ```go
 // Fire-and-Forget Background Task
 go func(parentCtx context.Context) {
-    // Create new link to parent, but new root span
+    // 1. Create a FRESH context (so we don't die when request finishes)
     newCtx := context.Background()
-    tracer := app.Tracer("background")
+    tracer := app.Tracer("background_worker")
     
-    // Link preserves the "caused by" relationship
+    // 2. Create a Link from the parent (Preserves causality)
     link := trace.LinkFromContext(parentCtx) 
+    
+    // 3. Start a new Root Span with the link
     ctx, span := tracer.Start(newCtx, "AsyncJob", trace.WithLinks(link))
     defer span.End()
     
-    // ... work ...
+    // Now you have a safe, independent span correlated to the original request
+    app.Info(ctx, "processing in background", ion.String("job", "email_send"))
 }(ctx)
 ```
 
