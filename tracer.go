@@ -9,6 +9,14 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// Link is an alias for trace.Link to avoid importing otel/trace.
+type Link = trace.Link
+
+// LinkFromContext extracts a link from the current context to connect spans.
+func LinkFromContext(ctx context.Context) Link {
+	return trace.LinkFromContext(ctx)
+}
+
 // Tracer creates spans for distributed tracing.
 type Tracer interface {
 	// Start creates a new span.
