@@ -17,16 +17,30 @@
     },
     "editable": true,
     "fiscalYearStartMonth": 0,
-    "graphTooltip": 0,
+    "graphTooltip": 1,
     "id": null,
-    "links": [],
-    "liveNow": false,
+    "links": [
+        {
+            "asDropdown": false,
+            "icon": "external link",
+            "includeVars": false,
+            "keepTime": true,
+            "tags": [],
+            "targetBlank": true,
+            "title": "🔍 Open Jaeger",
+            "tooltip": "View traces in Jaeger UI",
+            "type": "link",
+            "url": "http://localhost:16686/search?service=${trace_service}"
+        }
+    ],
+    "liveNow": true,
     "panels": [
         {
             "datasource": {
                 "type": "loki",
                 "uid": "loki"
             },
+            "description": "Log volume grouped by severity level",
             "fieldConfig": {
                 "defaults": {
                     "color": {
@@ -38,8 +52,8 @@
                         "axisLabel": "",
                         "axisPlacement": "auto",
                         "barAlignment": 0,
-                        "drawStyle": "line",
-                        "fillOpacity": 10,
+                        "drawStyle": "bars",
+                        "fillOpacity": 80,
                         "gradientMode": "none",
                         "hideFrom": {
                             "legend": false,
@@ -52,11 +66,11 @@
                         "scaleDistribution": {
                             "type": "linear"
                         },
-                        "showPoints": "auto",
+                        "showPoints": "never",
                         "spanNulls": false,
                         "stacking": {
                             "group": "A",
-                            "mode": "none"
+                            "mode": "normal"
                         },
                         "thresholdsStyle": {
                             "mode": "off"
@@ -73,10 +87,71 @@
                         ]
                     }
                 },
-                "overrides": []
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "error"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "red",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "warn"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "orange",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "info"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "green",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "debug"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "blue",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    }
+                ]
             },
             "gridPos": {
-                "h": 8,
+                "h": 6,
                 "w": 24,
                 "x": 0,
                 "y": 0
@@ -84,53 +159,17 @@
             "id": 1,
             "options": {
                 "legend": {
-                    "calcs": [],
-                    "displayMode": "list",
-                    "placement": "bottom",
+                    "calcs": [
+                        "sum"
+                    ],
+                    "displayMode": "table",
+                    "placement": "right",
                     "showLegend": true
                 },
                 "tooltip": {
-                    "mode": "single",
-                    "sort": "none"
+                    "mode": "multi",
+                    "sort": "desc"
                 }
-            },
-            "targets": [
-                {
-                    "datasource": {
-                        "type": "loki",
-                        "uid": "loki"
-                    },
-                    "editorMode": "builder",
-                    "expr": "sum by (level) (count_over_time({service_name=\"$service\"} [$__auto]))",
-                    "legendFormat": "{{level}}",
-                    "range": true,
-                    "refId": "A"
-                }
-            ],
-            "title": "Log Volume by Level",
-            "type": "timeseries"
-        },
-        {
-            "datasource": {
-                "type": "loki",
-                "uid": "loki"
-            },
-            "gridPos": {
-                "h": 16,
-                "w": 24,
-                "x": 0,
-                "y": 8
-            },
-            "id": 2,
-            "options": {
-                "dedupStrategy": "none",
-                "enableLogDetails": true,
-                "prettifyLogMessage": false,
-                "showCommonLabels": false,
-                "showLabels": false,
-                "showTime": true,
-                "sortOrder": "Descending",
-                "wrapLogMessage": false
             },
             "targets": [
                 {
@@ -139,41 +178,191 @@
                         "uid": "loki"
                     },
                     "editorMode": "code",
-                    "expr": "{service_name=\"$service\"} |= \"$query\"",
+                    "expr": "sum by (level) (count_over_time({service_name=~\"$service\"} [$__auto]))",
+                    "legendFormat": "{{level}}",
+                    "range": true,
+                    "refId": "A"
+                }
+            ],
+            "title": "📊 Log Volume by Level",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "description": "Error logs only - for quick triage",
+            "fieldConfig": {
+                "defaults": {},
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 6
+            },
+            "id": 3,
+            "options": {
+                "dedupStrategy": "none",
+                "enableLogDetails": true,
+                "prettifyLogMessage": true,
+                "showCommonLabels": false,
+                "showLabels": true,
+                "showTime": true,
+                "sortOrder": "Descending",
+                "wrapLogMessage": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "editorMode": "code",
+                    "expr": "{service_name=~\"$service\"} | json | level = `error` or level = `fatal`",
                     "queryType": "range",
                     "refId": "A"
                 }
             ],
-            "title": "Logs",
+            "title": "🔴 Errors & Fatals",
+            "type": "logs"
+        },
+        {
+            "datasource": {
+                "type": "jaeger",
+                "uid": "jaeger"
+            },
+            "description": "Click a trace to expand details. Use 'Open Jaeger' link for full search.",
+            "fieldConfig": {
+                "defaults": {},
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 6
+            },
+            "id": 4,
+            "options": {},
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "jaeger",
+                        "uid": "jaeger"
+                    },
+                    "queryType": "search",
+                    "refId": "A",
+                    "service": "${trace_service}",
+                    "tags": "",
+                    "limit": 20
+                }
+            ],
+            "title": "🔍 Recent Traces",
+            "transformations": [],
+            "type": "traces"
+        },
+        {
+            "datasource": {
+                "type": "loki",
+                "uid": "loki"
+            },
+            "description": "All logs with full-text search. Click trace_id links to view in Jaeger.",
+            "gridPos": {
+                "h": 12,
+                "w": 24,
+                "x": 0,
+                "y": 14
+            },
+            "id": 2,
+            "options": {
+                "dedupStrategy": "none",
+                "enableLogDetails": true,
+                "prettifyLogMessage": true,
+                "showCommonLabels": false,
+                "showLabels": true,
+                "showTime": true,
+                "sortOrder": "Descending",
+                "wrapLogMessage": true
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "loki",
+                        "uid": "loki"
+                    },
+                    "editorMode": "code",
+                    "expr": "{service_name=~\"$service\"} |= `$query`",
+                    "queryType": "range",
+                    "refId": "A"
+                }
+            ],
+            "title": "📜 All Logs (click trace_id → Jaeger)",
             "type": "logs"
         }
     ],
-    "refresh": "",
+    "refresh": "5s",
     "schemaVersion": 39,
-    "tags": [],
+    "tags": [
+        "ion",
+        "observability",
+        "blockchain"
+    ],
     "templating": {
         "list": [
             {
+                "allValue": ".*",
                 "current": {
-                    "selected": false,
-                    "text": "ion-otel-test",
-                    "value": "ion-otel-test"
+                    "selected": true,
+                    "text": "All",
+                    "value": "$__all"
+                },
+                "datasource": {
+                    "type": "loki",
+                    "uid": "loki"
+                },
+                "definition": "label_values(service_name)",
+                "hide": 0,
+                "includeAll": true,
+                "label": "Log Service",
+                "multi": false,
+                "name": "service",
+                "options": [],
+                "query": "label_values(service_name)",
+                "refresh": 2,
+                "regex": "",
+                "skipUrlSync": false,
+                "sort": 1,
+                "type": "query"
+            },
+            {
+                "current": {
+                    "selected": true,
+                    "text": "mempool-routing-engine",
+                    "value": "mempool-routing-engine"
                 },
                 "hide": 0,
                 "includeAll": false,
-                "label": "Service",
+                "label": "Trace Service",
                 "multi": false,
-                "name": "service",
+                "name": "trace_service",
                 "options": [
                     {
                         "selected": true,
-                        "text": "ion-otel-test",
-                        "value": "ion-otel-test"
+                        "text": "mempool-routing-engine",
+                        "value": "mempool-routing-engine"
+                    },
+                    {
+                        "selected": false,
+                        "text": "jaeger-all-in-one",
+                        "value": "jaeger-all-in-one"
                     }
                 ],
-                "query": "ion-otel-test",
+                "query": "mempool-routing-engine,jaeger-all-in-one",
                 "skipUrlSync": false,
-                "type": "textbox"
+                "type": "custom"
             },
             {
                 "current": {
@@ -182,9 +371,7 @@
                     "value": ""
                 },
                 "hide": 0,
-                "includeAll": false,
-                "label": "Search Query",
-                "multi": false,
+                "label": "Search",
                 "name": "query",
                 "options": [],
                 "query": "",
@@ -194,13 +381,21 @@
         ]
     },
     "time": {
-        "from": "now-15m",
+        "from": "now-1h",
         "to": "now"
     },
-    "timepicker": {},
+    "timepicker": {
+        "refresh_intervals": [
+            "5s",
+            "10s",
+            "30s",
+            "1m",
+            "5m"
+        ]
+    },
     "timezone": "",
-    "title": "Ion Logs & Traces",
-    "uid": "ion-logs-traces",
-    "version": 1,
+    "title": "Ion Observability",
+    "uid": "ion-observability",
+    "version": 7,
     "weekStart": ""
 }
