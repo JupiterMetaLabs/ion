@@ -61,6 +61,10 @@ func (w Warning) Error() string {
 //   - []Warning: Non-fatal issues (e.g., OTEL connection failed, tracing disabled)
 //   - error: Fatal configuration errors
 func New(cfg Config) (*Ion, []Warning, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
 	var warnings []Warning
 
 	ion := &Ion{

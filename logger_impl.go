@@ -21,14 +21,13 @@ type zapLogger struct {
 // zapLogFunc is a function type for zap's log methods.
 type zapLogFunc func(msg string, fields ...zap.Field)
 
-// logWithFields is a helper that consolidates context extraction.
-func (l *zapLogger) logWithFields(ctx context.Context, logFn zapLogFunc, msg string, fields []Field) {
+// prepareFields consolidates context extraction and field conversion.
+// It returns a slice of zap fields ready for logging.
+func (l *zapLogger) prepareFields(ctx context.Context, fields []Field) []zap.Field {
 	zapFields := toZapFields(fields)
 
 	// Short-circuit: context.Background() and context.TODO() never have trace info
-	hasTraceContext := ctx != nil && ctx != context.Background() && ctx != context.TODO()
-
-	if hasTraceContext {
+	if ctx != nil && ctx != context.Background() && ctx != context.TODO() {
 		// Extract readable trace_id/span_id strings for console/file
 		contextFields := extractContextZapFields(ctx)
 		// Add ctx for otelzap bridge to extract LogRecord.TraceID/SpanID
@@ -36,11 +35,7 @@ func (l *zapLogger) logWithFields(ctx context.Context, logFn zapLogFunc, msg str
 		zapFields = append(zapFields, contextFields...)
 	}
 
-	if len(zapFields) > 0 {
-		logFn(msg, zapFields...)
-	} else {
-		logFn(msg)
-	}
+	return zapFields
 }
 
 // Debug logs a message at debug level.
@@ -48,7 +43,9 @@ func (l *zapLogger) Debug(ctx context.Context, msg string, fields ...Field) {
 	if !l.atomicLvl.Enabled(zapcore.DebugLevel) {
 		return
 	}
-	l.logWithFields(ctx, l.zap.Debug, msg, fields)
+	// Stack depth: User -> (*Ion).Debug -> (*zapLogger).Debug
+	// Zap skips: 2 (configured in core)
+	l.zap.Debug(msg, l.prepareFields(ctx, fields)...)
 }
 
 // Info logs a message at info level.
@@ -56,7 +53,7 @@ func (l *zapLogger) Info(ctx context.Context, msg string, fields ...Field) {
 	if !l.atomicLvl.Enabled(zapcore.InfoLevel) {
 		return
 	}
-	l.logWithFields(ctx, l.zap.Info, msg, fields)
+	l.zap.Info(msg, l.prepareFields(ctx, fields)...)
 }
 
 // Warn logs a message at warn level.
@@ -64,7 +61,7 @@ func (l *zapLogger) Warn(ctx context.Context, msg string, fields ...Field) {
 	if !l.atomicLvl.Enabled(zapcore.WarnLevel) {
 		return
 	}
-	l.logWithFields(ctx, l.zap.Warn, msg, fields)
+	l.zap.Warn(msg, l.prepareFields(ctx, fields)...)
 }
 
 // Error logs a message at error level with an optional error.
@@ -73,19 +70,9 @@ func (l *zapLogger) Error(ctx context.Context, msg string, err error, fields ...
 		return
 	}
 
-	zapFields := toZapFields(fields)
-
-	// Add error field
+	zapFields := l.prepareFields(ctx, fields)
 	if err != nil {
 		zapFields = append(zapFields, zap.Error(err))
-	}
-
-	// Add trace context
-	hasTraceContext := ctx != nil && ctx != context.Background() && ctx != context.TODO()
-	if hasTraceContext {
-		contextFields := extractContextZapFields(ctx)
-		contextFields = append(contextFields, zap.Reflect(core.SentinelKey, ctx))
-		zapFields = append(zapFields, contextFields...)
 	}
 
 	l.zap.Error(msg, zapFields...)
@@ -95,20 +82,9 @@ func (l *zapLogger) Error(ctx context.Context, msg string, err error, fields ...
 func (l *zapLogger) Critical(ctx context.Context, msg string, err error, fields ...Field) {
 	// Critical maps to Fatal level, but we use a WithFatalHook(WriteThenNoop) in the factory
 	// so this will log "FATAL" and then RETURN, not exit.
-
-	zapFields := toZapFields(fields)
-
-	// Add error field
+	zapFields := l.prepareFields(ctx, fields)
 	if err != nil {
 		zapFields = append(zapFields, zap.Error(err))
-	}
-
-	// Add trace context
-	hasTraceContext := ctx != nil && ctx != context.Background() && ctx != context.TODO()
-	if hasTraceContext {
-		contextFields := extractContextZapFields(ctx)
-		contextFields = append(contextFields, zap.Reflect(core.SentinelKey, ctx))
-		zapFields = append(zapFields, contextFields...)
 	}
 
 	l.zap.Fatal(msg, zapFields...)

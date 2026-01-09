@@ -27,6 +27,7 @@ func TestIon_Tracer(t *testing.T) {
 	ctx := context.Background()
 	cfg := Default()
 	cfg.Tracing.Enabled = true
+	cfg.Tracing.Endpoint = "localhost:4317"
 	app, _, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New() error: %v", err)

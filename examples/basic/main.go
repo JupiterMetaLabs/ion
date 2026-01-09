@@ -23,7 +23,8 @@ func example1_SimpleUsage() {
 	ctx := context.Background()
 
 	// Create Ion instance - one entry point for everything
-	app, warnings, err := ion.New(ion.Default().WithService("example-app"))
+	// Use Development() to see caller and debug logs
+	app, warnings, err := ion.New(ion.Development().WithService("example-app"))
 	if err != nil {
 		log.Fatalf("Failed to create ion: %v", err)
 	}
