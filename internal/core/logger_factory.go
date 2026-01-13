@@ -26,6 +26,8 @@ func NewZapLogger(cfg config.Config) (*ZapFactoryResult, error) {
 	var otelCore zapcore.Core
 	var err error
 
+	atomicLevel := zap.NewAtomicLevelAt(parseLevel(cfg.Level))
+
 	// 1. Setup OTEL if enabled
 	if cfg.OTEL.Enabled && cfg.OTEL.Endpoint != "" {
 		// Handle Basic Auth - inject Authorization header
@@ -36,7 +38,13 @@ func NewZapLogger(cfg config.Config) (*ZapFactoryResult, error) {
 		if cfg.OTEL.Username != "" && cfg.OTEL.Password != "" {
 			auth := fmt.Sprintf("%s:%s", cfg.OTEL.Username, cfg.OTEL.Password)
 			encodedAuth := base64.StdEncoding.EncodeToString([]byte(auth))
-			headers["Authorization"] = "Basic " + encodedAuth
+
+			// Use lowercase "authorization" for gRPC to comply with HTTP/2 and gRPC metadata specs.
+			key := "Authorization"
+			if cfg.OTEL.Protocol != "http" {
+				key = "authorization"
+			}
+			headers[key] = "Basic " + encodedAuth
 		}
 		cfg.OTEL.Headers = headers // Update in place for setup
 
@@ -54,7 +62,6 @@ func NewZapLogger(cfg config.Config) (*ZapFactoryResult, error) {
 	}
 
 	// 2. Build Cores
-	atomicLevel := zap.NewAtomicLevelAt(parseLevel(cfg.Level))
 	cores := make([]zapcore.Core, 0, 4)
 
 	// Console
@@ -75,6 +82,10 @@ func NewZapLogger(cfg config.Config) (*ZapFactoryResult, error) {
 
 	// OTEL
 	if otelCore != nil {
+		// Wrap with level enforcer to ensure configured level (e.g. Debug) is respected
+		// even if otelzap defaults to Info.
+		otelCore = &levelEnforcer{Core: otelCore, level: atomicLevel}
+
 		// Filter trace_id/span_id strings (redundant) but keep SentinelKey
 		cores = append(cores, NewFilteringCore(otelCore, "trace_id", "span_id"))
 	}

@@ -141,6 +141,7 @@ Controls the OpenTelemetry **Logs** Exporter.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `Enabled` | `bool` | `false` | Enables log export to Collector. |
+| `Level` | `string` | `Config.Level` | **(Internal)** Respects the main `Level` config (e.g. `debug` or `info`). |
 | `Endpoint` | `string` | `""` | `host:port` (e.g., `localhost:4317`). |
 | `Protocol` | `string` | `"grpc"` | `"grpc"` (recommended) or `"http"`. |
 | `Insecure` | `bool` | `false` | If true, disables TLS (dev only). |
@@ -155,9 +156,11 @@ Controls the OpenTelemetry **Trace** Provider.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `Enabled` | `bool` | `false` | Enables trace generation and export. |
-| `Endpoint` | `string` | `""` | `host:port`. Defaults to `OTEL.Endpoint` if empty. |
+| `Endpoint` | `string` | `""` | `host:port`. **Inherits** `OTEL.Endpoint` if empty. |
 | `Sampler` | `string` | `"always"` | `"always"`, `"never"`, or `"ratio:0.X"` (e.g., `ratio:0.1` for 10%). |
-| `Protocol` | `string` | `"grpc"` | `"grpc"` or `"http"`. |
+| `Protocol` | `string` | `"grpc"` | `"grpc"` or `"http"`. **Inherits** `OTEL.Protocol` if empty. |
+| `Username` | `string` | `""` | **Inherits** `OTEL.Username` if empty. |
+| `Password` | `string` | `""` | **Inherits** `OTEL.Password` if empty. |
 
 ---
 
@@ -198,10 +201,10 @@ cfg := ion.Config{
         },
     },
     
-    // Distributed Tracing
     Tracing: ion.TracingConfig{
         Enabled: true,
-        // Fallback to OTEL.Endpoint is automatic if this is empty
+        // Fallback: If Endpoint/Auth/Protocol are empty, they are inherited from OTEL config above.
+        // This is safe to leave empty if using the same collector for logs and traces.
         Sampler: "ratio:0.05", // Sample 5% of traces
     },
 }

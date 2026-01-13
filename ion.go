@@ -99,6 +99,28 @@ func New(cfg Config) (*Ion, []Warning, error) {
 		if !cfg.Tracing.Insecure && cfg.OTEL.Insecure {
 			cfg.Tracing.Insecure = true // Inherit insecure if not explicitly set
 		}
+		if cfg.Tracing.Username == "" {
+			cfg.Tracing.Username = cfg.OTEL.Username
+		}
+		if cfg.Tracing.Password == "" {
+			cfg.Tracing.Password = cfg.OTEL.Password
+		}
+		if cfg.Tracing.Timeout == 0 {
+			cfg.Tracing.Timeout = cfg.OTEL.Timeout
+		}
+		if cfg.Tracing.BatchSize == 0 {
+			cfg.Tracing.BatchSize = cfg.OTEL.BatchSize
+		}
+		if cfg.Tracing.ExportInterval == 0 {
+			cfg.Tracing.ExportInterval = cfg.OTEL.ExportInterval
+		}
+		if cfg.Tracing.Headers == nil && len(cfg.OTEL.Headers) > 0 {
+			// Deep copy headers to avoid map reference issues
+			cfg.Tracing.Headers = make(map[string]string, len(cfg.OTEL.Headers))
+			for k, v := range cfg.OTEL.Headers {
+				cfg.Tracing.Headers[k] = v
+			}
+		}
 
 		tp, err := core.SetupTracerProvider(cfg.Tracing, cfg.ServiceName, cfg.Version)
 		if err != nil {

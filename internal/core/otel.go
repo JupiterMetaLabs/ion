@@ -143,7 +143,13 @@ func SetupTracerProvider(cfg config.TracingConfig, serviceName, version string) 
 	if cfg.Username != "" && cfg.Password != "" {
 		auth := fmt.Sprintf("%s:%s", cfg.Username, cfg.Password)
 		encodedAuth := base64.StdEncoding.EncodeToString([]byte(auth))
-		cfg.Headers["Authorization"] = "Basic " + encodedAuth
+
+		// Use lowercase "authorization" for gRPC to comply with HTTP/2 and gRPC metadata specs.
+		key := "Authorization"
+		if cfg.Protocol != "http" {
+			key = "authorization"
+		}
+		cfg.Headers[key] = "Basic " + encodedAuth
 	}
 
 	if DebugOTEL {

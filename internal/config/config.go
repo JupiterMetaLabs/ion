@@ -136,30 +136,15 @@ type TracingConfig struct {
 	// Enabled controls whether tracing is active.
 	Enabled bool `yaml:"enabled" json:"enabled"`
 
+	// Protocol: "grpc" or "http".
+	Protocol string `yaml:"protocol" json:"protocol"`
+
 	// Endpoint is the OTEL collector endpoint for traces.
 	// Falls back to OTEL.Endpoint if not set.
 	Endpoint string `yaml:"endpoint" json:"endpoint"`
 
-	// Protocol: "grpc" or "http".
-	Protocol string `yaml:"protocol" json:"protocol"`
-
 	// Insecure disables TLS.
 	Insecure bool `yaml:"insecure" json:"insecure"`
-
-	// Sampler configuration: "always", "never", or "ratio:0.5"
-	Sampler string `yaml:"sampler" json:"sampler"`
-
-	// Propagators: ["tracecontext", "baggage"]
-	Propagators []string `yaml:"propagators" json:"propagators"`
-
-	// BatchSize for span export.
-	BatchSize int `yaml:"batch_size" json:"batch_size"`
-
-	// ExportInterval for batch export.
-	ExportInterval time.Duration `yaml:"export_interval" json:"export_interval"`
-
-	// Timeout for export.
-	Timeout time.Duration `yaml:"timeout" json:"timeout"`
 
 	// Username for Basic Authentication (optional).
 	Username string `yaml:"username" json:"username" env:"TRACING_USERNAME"`
@@ -169,6 +154,21 @@ type TracingConfig struct {
 
 	// Headers for authentication.
 	Headers map[string]string `yaml:"headers" json:"headers"`
+
+	// Timeout for export.
+	Timeout time.Duration `yaml:"timeout" json:"timeout"`
+
+	// BatchSize for span export.
+	BatchSize int `yaml:"batch_size" json:"batch_size"`
+
+	// ExportInterval for batch export.
+	ExportInterval time.Duration `yaml:"export_interval" json:"export_interval"`
+
+	// Sampler configuration: "always", "never", or "ratio:0.5"
+	Sampler string `yaml:"sampler" json:"sampler"`
+
+	// Propagators: ["tracecontext", "baggage"]
+	Propagators []string `yaml:"propagators" json:"propagators"`
 
 	// Attributes for tracing.
 	Attributes map[string]string `yaml:"attributes" json:"attributes"`
