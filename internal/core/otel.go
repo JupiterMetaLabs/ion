@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strconv"
 	"strings"
@@ -133,6 +134,16 @@ func SetupLogProvider(cfg config.OTELConfig, serviceName, version string) (*LogP
 func SetupTracerProvider(cfg config.TracingConfig, serviceName, version string) (*TracerProvider, error) {
 	if !cfg.Enabled {
 		return nil, nil
+	}
+
+	// Handle Basic Auth - inject Authorization header
+	if cfg.Headers == nil {
+		cfg.Headers = make(map[string]string)
+	}
+	if cfg.Username != "" && cfg.Password != "" {
+		auth := fmt.Sprintf("%s:%s", cfg.Username, cfg.Password)
+		encodedAuth := base64.StdEncoding.EncodeToString([]byte(auth))
+		cfg.Headers["Authorization"] = "Basic " + encodedAuth
 	}
 
 	if DebugOTEL {

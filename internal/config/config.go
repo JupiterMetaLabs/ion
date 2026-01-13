@@ -161,6 +161,12 @@ type TracingConfig struct {
 	// Timeout for export.
 	Timeout time.Duration `yaml:"timeout" json:"timeout"`
 
+	// Username for Basic Authentication (optional).
+	Username string `yaml:"username" json:"username" env:"TRACING_USERNAME"`
+
+	// Password for Basic Authentication (optional).
+	Password string `yaml:"password" json:"password" env:"TRACING_PASSWORD"`
+
 	// Headers for authentication.
 	Headers map[string]string `yaml:"headers" json:"headers"`
 
