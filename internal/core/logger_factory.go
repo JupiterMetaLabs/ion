@@ -86,8 +86,10 @@ func NewZapLogger(cfg config.Config) (*ZapFactoryResult, error) {
 		// even if otelzap defaults to Info.
 		otelCore = &levelEnforcer{Core: otelCore, level: atomicLevel}
 
-		// Filter trace_id/span_id strings (redundant) but keep SentinelKey
-		cores = append(cores, NewFilteringCore(otelCore, "trace_id", "span_id"))
+		// Filter SentinelKey (internal context carrier) but allow trace_id/span_id
+		// to pass through as explicit attributes. This ensures they are present in the
+		// log body/attributes for easy regex extraction and visibility in Loki.
+		cores = append(cores, NewFilteringCore(otelCore, SentinelKey))
 	}
 
 	// 3. Combine

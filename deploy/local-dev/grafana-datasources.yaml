@@ -14,8 +14,8 @@ datasources:
     jsonData:
       derivedFields:
         - name: TraceID
-          matcherType: label
-          matcherRegex: trace_id
+          matcherType: regex
+          matcherRegex: "trace_id\"?\\s*[:=]\\s*\"?(\\w+)"
           datasourceUid: jaeger
           urlDisplayLabel: View Trace
           url: "$${__value.raw}"
@@ -33,3 +33,11 @@ datasources:
     jsonData:
       nodeGraph:
         enabled: true
+      tracesToLogs:
+        datasourceUid: loki
+        tags:
+          - service
+        filterByTraceID: true
+        filterBySpanID: true
+        spanStartTimeShift: "-1s"
+        spanEndTimeShift: "1s"

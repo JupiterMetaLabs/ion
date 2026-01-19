@@ -187,6 +187,28 @@ Events appear as points on the span timeline in Jaeger/Tempo, helping you unders
 
 ---
 
+## Decision Guide: Spans vs. Events
+
+Understanding when to create a new span versus adding an event is key to clean traces.
+
+| Feature | `tracer.Start(...)` (New Span) | `span.AddEvent(...)` |
+| :--- | :--- | :--- |
+| **Concept** | **Duration** (Start & End) | **Point in Time** (Snapshot) |
+| **Visual** | A bar with length | A dot on the timeline |
+| **Best For** | DB Queries, API Calls, Major Functions | Retries, Cache Misses, Valdiation Failures |
+| **Overhead** | Higher (Context switching, allocs) | Very Low (Log entry) |
+
+**Rule of Thumb:**
+- **"How long did this take?"** → New Span
+- **"When did this happen?"** → Add Event
+
+### What about `RecordError`?
+
+`RecordError(err)` is just a specialized **Event**.
+*   It adds an event named `"exception"` with the error message and stack trace.
+*   **Where to put it?** Record the error on the **active span** where the failure occurred.
+*   **Bubble Up:** If a child span fails (e.g., DB call), record the error there. If that error causes the parent operation to fail, record it on the parent span as well.
+
 ## Span Creation Options
 
 When starting a span, you can customize its behavior:
