@@ -19,7 +19,6 @@ Ion is built on strict operational guarantees. Operators can rely on these invar
 ## Non-Goals
 
 To maintain focus and stability, Ion explicitly avoids:
-*   **Metrics**: Use the Prometheus or OpenTelemetry Metrics SDKs directly.
 *   **Alerting**: Ion emits signals; it does not manage thresholds or paging.
 *   **Framework Magic**: Ion does not auto-inject into HTTP handlers without explicit middleware usage.
 
@@ -116,6 +115,7 @@ Ion uses a comprehensive configuration struct for behavior control. This maps 1:
 | `File` | `FileConfig` | `Enabled: false` | configuration for file logging (with rotation). |
 | `OTEL` | `OTELConfig` | `Enabled: false` | configuration for remote OpenTelemetry logging. |
 | `Tracing` | `TracingConfig` | `Enabled: false` | configuration for Distributed Tracing. |
+| `Metrics` | `MetricsConfig` | `Enabled: false` | configuration for OpenTelemetry Metrics. |
 
 ### Console Configuration (`ion.ConsoleConfig`)
 | Field | Type | Default | Description |
@@ -157,8 +157,21 @@ Controls the OpenTelemetry **Trace** Provider.
 |-------|------|---------|-------------|
 | `Enabled` | `bool` | `false` | Enables trace generation and export. |
 | `Endpoint` | `string` | `""` | `host:port`. **Inherits** `OTEL.Endpoint` if empty. |
-| `Sampler` | `string` | `"always"` | `"always"`, `"never"`, or `"ratio:0.X"` (e.g., `ratio:0.1` for 10%). |
+| `Sampler` | `string` | `"ratio:0.1"` | `"always"`, `"never"`, or `"ratio:0.X"` (e.g., `ratio:0.1` for 10%). Development mode uses `"always"`. |
 | `Protocol` | `string` | `"grpc"` | `"grpc"` or `"http"`. **Inherits** `OTEL.Protocol` if empty. |
+| `Username` | `string` | `""` | **Inherits** `OTEL.Username` if empty. |
+| `Password` | `string` | `""` | **Inherits** `OTEL.Password` if empty. |
+
+### Metrics Configuration (`ion.MetricsConfig`)
+Controls the OpenTelemetry **Metrics** Provider (OTLP Push).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Enabled` | `bool` | `false` | Enables metrics export. |
+| `Endpoint` | `string` | `""` | `host:port`. **Inherits** `OTEL.Endpoint` if empty. |
+| `Interval` | `Duration` | `15s` | Push interval. Development mode uses `5s`. |
+| `Temporality` | `string` | `"cumulative"` | `"cumulative"` (Prometheus-compatible) or `"delta"`. |
+| `Protocol` | `string` | `"grpc"` | **Inherits** `OTEL.Protocol` if empty. |
 | `Username` | `string` | `""` | **Inherits** `OTEL.Username` if empty. |
 | `Password` | `string` | `""` | **Inherits** `OTEL.Password` if empty. |
 
@@ -481,27 +494,6 @@ Operators must understand how Ion behaves under stress:
 *   **High Load**: Tracing uses a batch processor. Under extreme load, if the export rate lags generation, spans are dropped to prevent memory leaks (bounded buffer).
 
 ---
-
-## Globals & Dependency Injection
-
-> **⚠️ WARNING**: Global state is strictly for migration and legacy support.
-
-**Do not** use `ion.SetGlobal` in new libraries or microservices.
-**Do** inject `ion.Logger` via struct constructors.
-
-```go
-// CORRECT: Dependency Injection
-type Server struct {
-    log ion.Logger
-}
-
-// INCORRECT: Hidden dependency
-func (s *Server) Handle() {
-    ion.Info(...) // Relies on global state
-}
-```
-
-If `ion.GetGlobal()` is called without initialization, it returns a **safe no-op logger**. It will not panic, but your logs will be silently discarded to protect the runtime.
 
 ---
 

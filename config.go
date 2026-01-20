@@ -20,6 +20,9 @@ type OTELConfig = config.OTELConfig
 // TracingConfig configures distributed tracing.
 type TracingConfig = config.TracingConfig
 
+// MetricsConfig configures OpenTelemetry metrics export.
+type MetricsConfig = config.MetricsConfig
+
 // Default returns a Config with sensible production defaults.
 func Default() Config {
 	return config.Default()

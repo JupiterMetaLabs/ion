@@ -39,6 +39,9 @@ type Config struct {
 
 	// Tracing configuration for distributed tracing.
 	Tracing TracingConfig `yaml:"tracing" json:"tracing"`
+
+	// Metrics configuration for OpenTelemetry metrics.
+	Metrics MetricsConfig `yaml:"metrics" json:"metrics"`
 }
 
 // ConsoleConfig configures console (stdout/stderr) output.
@@ -174,7 +177,48 @@ type TracingConfig struct {
 	Attributes map[string]string `yaml:"attributes" json:"attributes"`
 }
 
+// MetricsConfig configures OpenTelemetry metrics export.
+type MetricsConfig struct {
+	// Enabled controls whether metrics export is active.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// Protocol: "grpc" or "http".
+	Protocol string `yaml:"protocol" json:"protocol"`
+
+	// Endpoint is the OTEL collector endpoint for metrics.
+	// Falls back to OTEL.Endpoint if not set.
+	Endpoint string `yaml:"endpoint" json:"endpoint"`
+
+	// Insecure disables TLS.
+	Insecure bool `yaml:"insecure" json:"insecure"`
+
+	// Username for Basic Authentication (optional).
+	Username string `yaml:"username" json:"username" env:"METRICS_USERNAME"`
+
+	// Password for Basic Authentication (optional).
+	Password string `yaml:"password" json:"password" env:"METRICS_PASSWORD"`
+
+	// Headers for authentication.
+	Headers map[string]string `yaml:"headers" json:"headers"`
+
+	// Timeout for export.
+	Timeout time.Duration `yaml:"timeout" json:"timeout"`
+
+	// Interval is the push interval for metrics.
+	// Default: 15s
+	Interval time.Duration `yaml:"interval" json:"interval"`
+
+	// Temporality preference: "cumulative" (default) or "delta".
+	// Prometheus prefers Cumulative.
+	Temporality string `yaml:"temporality" json:"temporality"`
+
+	// Attributes for metrics resource.
+	Attributes map[string]string `yaml:"attributes" json:"attributes"`
+}
+
 // Default returns a Config with sensible production defaults.
+// All telemetry backends (OTEL, Tracing, Metrics) are disabled by default.
+// When enabled, they inherit endpoint/auth from OTEL config automatically.
 func Default() Config {
 	return Config{
 		Level:       "info",
@@ -201,15 +245,46 @@ func Default() Config {
 			BatchSize:      512,
 			ExportInterval: 5 * time.Second,
 		},
+		Tracing: TracingConfig{
+			Enabled:        false,
+			Sampler:        "ratio:0.1", // 10% sampling for production (safe default)
+			BatchSize:      512,
+			ExportInterval: 5 * time.Second,
+			// Endpoint, Protocol, Auth inherited from OTEL if empty
+		},
+		Metrics: MetricsConfig{
+			Enabled:     false,
+			Interval:    15 * time.Second, // Standard OTel push interval
+			Temporality: "cumulative",     // Prometheus-compatible
+			// Endpoint, Protocol, Auth inherited from OTEL if empty
+		},
 	}
 }
 
 // Development returns a Config optimized for development.
+//   - Debug level logging with pretty console output.
+//   - Tracing pre-configured with "always" sampling (but disabled by default).
+//   - Metrics pre-configured with 5s push interval (but disabled by default).
+//
+// To enable observability, you must explicitly set:
+//
+//	cfg.OTEL.Enabled = true           // For remote log export
+//	cfg.OTEL.Endpoint = "localhost:4317"
+//	cfg.OTEL.Insecure = true          // For local dev
+//	cfg.Tracing.Enabled = true        // For distributed tracing
+//	cfg.Metrics.Enabled = true        // For metrics export
 func Development() Config {
 	cfg := Default()
 	cfg.Level = "debug"
 	cfg.Development = true
 	cfg.Console.Format = "pretty"
+
+	// Dev-friendly tracing: sample everything
+	cfg.Tracing.Sampler = "always"
+
+	// Dev-friendly metrics: faster feedback loop
+	cfg.Metrics.Interval = 5 * time.Second
+
 	return cfg
 }
 
@@ -244,6 +319,15 @@ func (c Config) WithTracing(endpoint string) Config {
 	c.Tracing.Enabled = true
 	if endpoint != "" {
 		c.Tracing.Endpoint = endpoint
+	}
+	return c
+}
+
+// WithMetrics returns a copy of the config with metrics enabled.
+func (c Config) WithMetrics(endpoint string) Config {
+	c.Metrics.Enabled = true
+	if endpoint != "" {
+		c.Metrics.Endpoint = endpoint
 	}
 	return c
 }
@@ -305,6 +389,19 @@ func (c Config) Validate() error {
 	}
 	if c.Tracing.Protocol != "" && c.Tracing.Protocol != "grpc" && c.Tracing.Protocol != "http" {
 		errs = append(errs, fmt.Sprintf("invalid tracing protocol %q (use: grpc, http)", c.Tracing.Protocol))
+	}
+
+	// Validate metrics config
+	if c.Metrics.Enabled {
+		if c.Metrics.Endpoint == "" && c.OTEL.Endpoint == "" {
+			errs = append(errs, "metrics enabled but no endpoint (set Metrics.Endpoint or OTEL.Endpoint)")
+		}
+		if c.Metrics.Protocol != "" && c.Metrics.Protocol != "grpc" && c.Metrics.Protocol != "http" {
+			errs = append(errs, fmt.Sprintf("invalid metrics protocol %q (use: grpc, http)", c.Metrics.Protocol))
+		}
+		if c.Metrics.Temporality != "" && c.Metrics.Temporality != "cumulative" && c.Metrics.Temporality != "delta" {
+			errs = append(errs, fmt.Sprintf("invalid metrics temporality %q (use: cumulative, delta)", c.Metrics.Temporality))
+		}
 	}
 
 	if len(errs) > 0 {

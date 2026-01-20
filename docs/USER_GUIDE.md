@@ -156,12 +156,12 @@ In a blockchain node, distinct subsystems (P2P, Consensus, Mempool) need distinc
 
 ```go
 // main.go (Node Entrypoint)
-root := ion.New(cfg) // name="ion-node"
+app, _, _ := ion.New(cfg) // name="ion-node"
 
 // Inject scoped loggers into major components
-p2pServer := p2p.NewServer(root.Named("p2p"))        // name="ion-node.p2p"
-consensus := engine.New(root.Named("consensus"))     // name="ion-node.consensus"
-mempool   := pool.New(root.Named("mempool"))         // name="ion-node.mempool"
+p2pServer := p2p.NewServer(app.Named("p2p"))        // name="ion-node.p2p"
+consensus := engine.New(app.Named("consensus"))     // name="ion-node.consensus"
+mempool   := pool.New(app.Named("mempool"))         // name="ion-node.mempool"
 ```
 
 ```go

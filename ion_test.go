@@ -2,7 +2,6 @@ package ion
 
 import (
 	"context"
-	"sync"
 	"testing"
 )
 
@@ -94,86 +93,5 @@ func TestIon_Shutdown(t *testing.T) {
 	// Should not error when console is disabled
 	if err := app.Shutdown(ctx); err != nil {
 		t.Errorf("Shutdown() error: %v", err)
-	}
-}
-
-func TestGlobal_SetAndGet(t *testing.T) {
-	ctx := context.Background()
-	app, _, _ := New(Default().WithService("test-global"))
-	SetGlobal(app)
-	defer app.Shutdown(ctx)
-
-	// Global logging should work
-	Info(ctx, "global info")
-	Debug(ctx, "global debug")
-
-	// GetGlobal() should return the same instance
-	got := GetGlobal()
-	if got != app {
-		t.Error("GetGlobal() did not return the global instance")
-	}
-
-	// GetTracer should work (ion.go implementation)
-	tracer := GetTracer("global.test")
-	if tracer == nil {
-		t.Fatal("expected non-nil global tracer")
-	}
-}
-
-func TestGlobal_Fallback(t *testing.T) {
-	// Test that GetGlobal() returns a working fallback when global is nil
-	ctx := context.Background()
-
-	// Save current global
-	globalMu.Lock()
-	savedGlobal := globalLogger
-	// Reset global
-	globalLogger = nil
-	globalOnce = sync.Once{} // Reset once (requires re-init if we used variables for Once, but globalOnce is package var)
-	// We can't easily reset sync.Once if it's a global var without unsafe or reflection.
-	// However, GetGlobal checks globalLogger == nil. sync.Once is for the warning.
-	// The fallback logic in GetGlobal() creates a new logger if global is nil.
-	globalMu.Unlock()
-
-	// Restore after test
-	defer func() {
-		globalMu.Lock()
-		globalLogger = savedGlobal
-		globalMu.Unlock()
-	}()
-
-	// This should use fallback, not panic
-	Info(ctx, "fallback test")
-
-	// Check GetGlobal returns non-nil
-	if GetGlobal() == nil {
-		t.Error("expected fallback logger")
-	}
-}
-
-func TestGetGlobal_NoSideEffects(t *testing.T) {
-	// Ensure GetGlobal doesn't allocate/panic/create heavy objects if SetGlobal wasn't called.
-	// We specifically want to ensure it's safe to call repeatedly.
-
-	// Reset global for this test (using lock to be safe, though tests run sequentially mostly)
-	globalMu.Lock()
-	savedGlobal := globalLogger
-	globalLogger = nil
-	globalMu.Unlock()
-
-	defer func() {
-		globalMu.Lock()
-		globalLogger = savedGlobal
-		globalMu.Unlock()
-	}()
-
-	l1 := GetGlobal()
-	l2 := GetGlobal()
-
-	if l1 == nil {
-		t.Fatal("GetGlobal returned nil")
-	}
-	if l1 != l2 {
-		t.Error("GetGlobal should return stable instance (e.g. static nop) when not set")
 	}
 }

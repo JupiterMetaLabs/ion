@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
 
 	"github.com/JupiterMetaLabs/ion/internal/core"
-	"go.uber.org/zap"
+	"go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/noop"
 )
 
 // Ion is the unified observability instance providing logging and tracing.
@@ -30,15 +30,18 @@ import (
 //	ctx, span := tracer.Start(ctx, "Operation")
 //	defer span.End()
 //
-//	// Global usage (DEPRECATED: Prefer Dependency Injection)
-//	ion.SetGlobal(app)
-//	ion.Info(ctx, "works from anywhere (but try to avoid this)")
+//	// Metrics
+//	meter := app.Meter("myapp.component")
+//	counter, _ := meter.Int64Counter("my.counter")
+//	counter.Add(ctx, 1)
 type Ion struct {
 	logger         Logger
 	serviceName    string
 	version        string
 	tracerProvider *core.TracerProvider
 	tracingEnabled bool
+	meterProvider  *core.MeterProvider
+	metricsEnabled bool
 }
 
 // Warning represents a non-fatal initialization issue.
@@ -128,107 +131,51 @@ func New(cfg Config) (*Ion, []Warning, error) {
 				Component: "tracing",
 				Err:       fmt.Errorf("failed to init tracing: %w (tracing disabled)", err),
 			})
-		} else if tp != nil {
 			ion.tracerProvider = tp
 			ion.tracingEnabled = true
 		}
 	}
 
+	// 3. Setup Metrics (OTEL Metrics)
+	if cfg.Metrics.Enabled {
+		// Use Metrics endpoint or fallback to OTEL endpoint
+		if cfg.Metrics.Endpoint == "" {
+			cfg.Metrics.Endpoint = cfg.OTEL.Endpoint
+		}
+		if cfg.Metrics.Protocol == "" {
+			cfg.Metrics.Protocol = cfg.OTEL.Protocol
+		}
+		if !cfg.Metrics.Insecure && cfg.OTEL.Insecure {
+			cfg.Metrics.Insecure = true
+		}
+		// Auth inheritance
+		if cfg.Metrics.Username == "" {
+			cfg.Metrics.Username = cfg.OTEL.Username
+		}
+		if cfg.Metrics.Password == "" {
+			cfg.Metrics.Password = cfg.OTEL.Password
+		}
+		// Metadata inheritance
+		if cfg.Metrics.Headers == nil && len(cfg.OTEL.Headers) > 0 {
+			cfg.Metrics.Headers = make(map[string]string, len(cfg.OTEL.Headers))
+			for k, v := range cfg.OTEL.Headers {
+				cfg.Metrics.Headers[k] = v
+			}
+		}
+
+		mp, err := core.SetupMeterProvider(cfg.Metrics, cfg.ServiceName, cfg.Version)
+		if err != nil {
+			warnings = append(warnings, Warning{
+				Component: "metrics",
+				Err:       fmt.Errorf("failed to init metrics: %w (metrics disabled)", err),
+			})
+		} else if mp != nil {
+			ion.meterProvider = mp
+			ion.metricsEnabled = true
+		}
+	}
+
 	return ion, warnings, nil
-}
-
-// --- Global Accessor (Deprecated) ---
-
-var (
-	globalLogger Logger
-	globalMu     sync.RWMutex
-	globalOnce   sync.Once
-)
-
-// SetGlobal sets the global logger instance.
-//
-// Deprecated: Use Dependency Injection instead. This method exists for migration
-// purposes only and will be removed in a future version.
-func SetGlobal(logger Logger) {
-	globalOnce.Do(func() {
-		// Log warning on first usage
-		log.Println("[ion] WARNING: ion.SetGlobal is deprecated. Please inject ion.Logger explicitly.")
-	})
-	globalMu.Lock()
-	defer globalMu.Unlock()
-	globalLogger = logger
-}
-
-// GetGlobal returns the global logger.
-// If SetGlobal has not been called, it returns a safe no-op logger.
-func GetGlobal() Logger {
-	globalMu.RLock()
-	defer globalMu.RUnlock()
-	if globalLogger != nil {
-		return globalLogger
-	}
-	return nopLogger
-}
-
-var nopLogger Logger = &zapLogger{
-	zap:       zap.NewNop(),
-	atomicLvl: zap.NewAtomicLevel(),
-}
-
-// Debug logs at debug level using global logger.
-func Debug(ctx context.Context, msg string, fields ...Field) {
-	GetGlobal().Debug(ctx, msg, fields...)
-}
-
-// Info logs at info level using global logger.
-func Info(ctx context.Context, msg string, fields ...Field) {
-	GetGlobal().Info(ctx, msg, fields...)
-}
-
-// Warn logs at warn level using global logger.
-func Warn(ctx context.Context, msg string, fields ...Field) {
-	GetGlobal().Warn(ctx, msg, fields...)
-}
-
-// Error logs at error level using global logger.
-func Error(ctx context.Context, msg string, err error, fields ...Field) {
-	GetGlobal().Error(ctx, msg, err, fields...)
-}
-
-// Critical logs at critical level using global logger.
-// Does NOT exit the process - caller decides what to do.
-func Critical(ctx context.Context, msg string, err error, fields ...Field) {
-	GetGlobal().Critical(ctx, msg, err, fields...)
-}
-
-// GetTracer returns a named tracer from global Ion.
-// Note: This relies on SetGlobal being called with an *Ion instance (or implementation that supports Tracer())
-// If the global logger does not support Tracer, this might fail or return no-op.
-// Since Logger interface doesn't have Tracer(), we can only check if global is *Ion.
-// BUT, legacy GetTracer probably used `otel.Tracer`.
-// We should probably just call `otel.Tracer` directly here or use `GetGlobal`?
-// The previous implementation called `getGlobal().Tracer()`.
-// Since `Logger` interface does NOT have `Tracer`, `ion.Tracer` works on `*Ion`.
-// So `GetGlobal()` returning `Logger` logic is tricky for `Tracer`.
-// Fix: Check type assertion.
-func GetTracer(name string) Tracer {
-	if ion, ok := GetGlobal().(*Ion); ok {
-		return ion.Tracer(name)
-	}
-	// Fallback to OTEL directly if global logger isn't *Ion?
-	// or return no-op.
-	// We'll return a no-op tracer with a warning log if possible.
-	return newOTELTracer(name) // This uses global OTEL provider set by core.
-}
-
-// Sync flushes the global logger.
-func Sync() error {
-	return GetGlobal().Sync()
-}
-
-// Named returns a child logger from global.
-func Named(name string) Logger {
-	return GetGlobal().Named(name)
 }
 
 // --- Logger interface implementation ---
@@ -292,14 +239,35 @@ func (i *Ion) Tracer(name string) Tracer {
 	return newOTELTracer(name)
 }
 
+// --- Metrics access ---
+
+// Meter returns a named meter for creating instruments.
+func (i *Ion) Meter(name string, opts ...metric.MeterOption) metric.Meter {
+	if !i.metricsEnabled || i.meterProvider == nil {
+		return newNoopMeter()
+	}
+	return i.meterProvider.Meter(name, opts...)
+}
+
+// Ensure noopMeter is initialized with a working noop implementation
+func newNoopMeter() metric.Meter {
+	return noop.NewMeterProvider().Meter("noop")
+}
+
 // --- Lifecycle ---
 
-// Shutdown gracefully shuts down logging and tracing.
+// Shutdown gracefully shuts down logging, tracing, and metrics.
 func (i *Ion) Shutdown(ctx context.Context) error {
 	var firstErr error
 
 	if i.tracerProvider != nil {
 		if err := i.tracerProvider.Shutdown(ctx); err != nil {
+			firstErr = err
+		}
+	}
+
+	if i.meterProvider != nil {
+		if err := i.meterProvider.Shutdown(ctx); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

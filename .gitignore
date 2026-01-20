@@ -1,2 +1,8 @@
 .DS_Store
 ion-release/
+
+# Compiled Go binaries (named after directory)
+/basic
+examples/basic/basic
+examples/otel-test/otel-test
+*.exe

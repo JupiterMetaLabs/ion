@@ -96,26 +96,38 @@ func example3_ChildLoggers() {
 }
 
 // ============================================================================
-// Example 4: Global Usage Pattern
-// For scripts or legacy code where DI is impractical.
+// Example 4: Metrics
+// Demonstrates OpenTelemetry metrics instrumentation.
 // ============================================================================
 
-func example4_GlobalUsage() {
+func example4_Metrics() {
 	ctx := context.Background()
 
-	app, _, _ := ion.New(ion.Default().WithService("script"))
-	ion.SetGlobal(app)
-	defer ion.Sync()
+	cfg := ion.Default().WithService("metrics-demo")
+	cfg.Metrics.Enabled = true
+	cfg.Metrics.Endpoint = "localhost:4317" // OTel Collector
+	cfg.Metrics.Protocol = "grpc"
+	cfg.Metrics.Insecure = true
 
-	// Now use package-level functions anywhere
-	ion.Info(ctx, "using global logger")
-	ion.Debug(ctx, "debug from anywhere")
+	app, _, err := ion.New(cfg)
+	if err != nil {
+		log.Fatalf("Failed to create ion: %v", err)
+	}
+	defer app.Shutdown(ctx)
 
-	// Get tracer from global too
-	tracer := ion.GetTracer("script.process")
-	ctx, span := tracer.Start(ctx, "DoWork")
-	ion.Info(ctx, "inside span") // Has trace_id, span_id
-	span.End()
+	// Get a named meter
+	meter := app.Meter("example.metrics")
+
+	// Create instruments
+	requestCounter, _ := meter.Int64Counter("http_requests_total") // metric.WithDescription("Total HTTP requests"),
+
+	latencyHist, _ := meter.Float64Histogram("http_request_duration_seconds") // metric.WithDescription("HTTP request latency"),
+
+	// Record metrics
+	requestCounter.Add(ctx, 1)
+	latencyHist.Record(ctx, 0.025) // 25ms
+
+	app.Info(ctx, "metrics recorded")
 }
 
 // ============================================================================
@@ -189,9 +201,6 @@ func example6_ProductionSetup() {
 		log.Printf("ion warning: %v", w)
 	}
 
-	// Set as global for convenience
-	ion.SetGlobal(app)
-
 	// CRITICAL: Graceful shutdown to flush all logs and traces
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -251,8 +260,8 @@ func main() {
 	fmt.Println("\n=== Example 3: Child Loggers ===")
 	example3_ChildLoggers()
 
-	fmt.Println("\n=== Example 4: Global Usage ===")
-	example4_GlobalUsage()
+	fmt.Println("\n=== Example 4: Metrics ===")
+	example4_Metrics()
 
 	fmt.Println("\n=== Example 5: Blockchain Fields ===")
 	example5_BlockchainFields()
