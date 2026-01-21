@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -32,9 +31,11 @@ type Span interface {
 	// RecordError records an error as an event.
 	RecordError(err error)
 	// SetAttributes sets attributes on the span.
-	SetAttributes(attrs ...attribute.KeyValue)
+	// Use attribute.String(), attribute.Int64(), etc. to create Attr values.
+	SetAttributes(attrs ...Attr)
 	// AddEvent adds an event to the span.
-	AddEvent(name string, attrs ...attribute.KeyValue)
+	// Use attribute.String(), attribute.Int64(), etc. to create Attr values.
+	AddEvent(name string, attrs ...Attr)
 }
 
 // SpanOption configures span creation.
@@ -44,7 +45,7 @@ type SpanOption interface {
 
 type spanOptions struct {
 	kind       trace.SpanKind
-	attributes []attribute.KeyValue
+	attributes []Attr
 	links      []trace.Link
 	otelOpts   []trace.SpanStartOption
 }
@@ -56,12 +57,13 @@ func (k kindOption) apply(o *spanOptions) { o.kind = trace.SpanKind(k) }
 // WithSpanKind sets the span kind (client, server, etc).
 func WithSpanKind(kind trace.SpanKind) SpanOption { return kindOption(kind) }
 
-type attrOption []attribute.KeyValue
+type attrOption []Attr
 
 func (a attrOption) apply(o *spanOptions) { o.attributes = append(o.attributes, a...) }
 
 // WithAttributes adds attributes to the span.
-func WithAttributes(attrs ...attribute.KeyValue) SpanOption { return attrOption(attrs) }
+// Use attribute.String(), attribute.Int64(), etc. to create Attr values.
+func WithAttributes(attrs ...Attr) SpanOption { return attrOption(attrs) }
 
 type linkOption []trace.Link
 
@@ -113,11 +115,11 @@ type otelSpan struct {
 	span trace.Span
 }
 
-func (s *otelSpan) End()                                      { s.span.End() }
-func (s *otelSpan) SetStatus(code codes.Code, desc string)    { s.span.SetStatus(code, desc) }
-func (s *otelSpan) RecordError(err error)                     { s.span.RecordError(err) }
-func (s *otelSpan) SetAttributes(attrs ...attribute.KeyValue) { s.span.SetAttributes(attrs...) }
-func (s *otelSpan) AddEvent(name string, attrs ...attribute.KeyValue) {
+func (s *otelSpan) End()                                   { s.span.End() }
+func (s *otelSpan) SetStatus(code codes.Code, desc string) { s.span.SetStatus(code, desc) }
+func (s *otelSpan) RecordError(err error)                  { s.span.RecordError(err) }
+func (s *otelSpan) SetAttributes(attrs ...Attr)            { s.span.SetAttributes(attrs...) }
+func (s *otelSpan) AddEvent(name string, attrs ...Attr) {
 	s.span.AddEvent(name, trace.WithAttributes(attrs...))
 }
 
@@ -131,8 +133,8 @@ func (noopTracer) Start(ctx context.Context, _ string, _ ...SpanOption) (context
 
 type noopSpan struct{}
 
-func (noopSpan) End()                                   {}
-func (noopSpan) SetStatus(codes.Code, string)           {}
-func (noopSpan) RecordError(error)                      {}
-func (noopSpan) SetAttributes(...attribute.KeyValue)    {}
-func (noopSpan) AddEvent(string, ...attribute.KeyValue) {}
+func (noopSpan) End()                         {}
+func (noopSpan) SetStatus(codes.Code, string) {}
+func (noopSpan) RecordError(error)            {}
+func (noopSpan) SetAttributes(...Attr)        {}
+func (noopSpan) AddEvent(string, ...Attr)     {}

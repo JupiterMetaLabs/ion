@@ -326,6 +326,22 @@ func ProcessOrder(ctx context.Context, orderID string) error {
 }
 ```
 
+> **📘 OTel Types in Ion**
+> 
+> Ion uses OpenTelemetry for tracing and metrics. The `ion.Attr` type (visible in Ion's API signatures) is an alias for `attribute.KeyValue`.
+> 
+> To create attributes, import the OTel package directly:
+> ```go
+> import "go.opentelemetry.io/otel/attribute"
+> 
+> span.SetAttributes(
+>     attribute.String("order.id", orderID),
+>     attribute.Int64("retry.count", 3),
+> )
+> ```
+> 
+> This is intentional: **Ion abstracts provider lifecycle, not the instrumentation API.** Users benefit from learning the standard OTel API.
+
 ---
 
 ## Common Configurations
