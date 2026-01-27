@@ -26,9 +26,6 @@ import (
 	insecurecreds "google.golang.org/grpc/credentials/insecure"
 )
 
-// DebugOTEL enables debug logging for OTEL setup.
-var DebugOTEL bool
-
 // LogProvider manages the OpenTelemetry log provider.
 type LogProvider struct {
 	loggerProvider *sdklog.LoggerProvider
@@ -149,12 +146,6 @@ func SetupTracerProvider(cfg config.TracingConfig, serviceName, version string) 
 
 	// Inject Basic Auth header if credentials provided
 	cfg.Headers = injectBasicAuth(cfg.Headers, cfg.Username, cfg.Password, cfg.Protocol)
-
-	if DebugOTEL {
-		// We could use an internal logger here, but for now we silence it or return warnings.
-		// Retaining debug flag check but removing direct log.Printf to avoid library side effects.
-		// If we want to support debugging, we should accept a logger in the config.
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -331,7 +322,7 @@ func processEndpoint(endpoint string, configInsecure bool) (string, bool, error)
 	// But url.Parse("example.com:4317") parses as path "example.com:4317" with empty host if no scheme.
 	// We handled no-scheme above. So here we expect a scheme.
 
-	insecure := configInsecure
+	var insecure bool
 	switch u.Scheme {
 	case "http":
 		insecure = true

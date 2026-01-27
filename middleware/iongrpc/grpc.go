@@ -34,7 +34,7 @@ func ServerHandler(opts ...Option) stats.Handler {
 
 	otelOpts := []otelgrpc.Option{}
 	if o.filter != nil {
-		otelOpts = append(otelOpts, otelgrpc.WithInterceptorFilter(o.filter))
+		otelOpts = append(otelOpts, otelgrpc.WithInterceptorFilter(o.filter)) //nolint:staticcheck // Supporting legacy filter for now
 	}
 
 	return otelgrpc.NewServerHandler(otelOpts...)
@@ -56,7 +56,7 @@ func ClientHandler(opts ...Option) stats.Handler {
 
 	otelOpts := []otelgrpc.Option{}
 	if o.filter != nil {
-		otelOpts = append(otelOpts, otelgrpc.WithInterceptorFilter(o.filter))
+		otelOpts = append(otelOpts, otelgrpc.WithInterceptorFilter(o.filter)) //nolint:staticcheck // Supporting legacy filter for now
 	}
 
 	return otelgrpc.NewClientHandler(otelOpts...)
@@ -65,7 +65,7 @@ func ClientHandler(opts ...Option) stats.Handler {
 // --- Options ---
 
 type options struct {
-	filter otelgrpc.InterceptorFilter
+	filter otelgrpc.InterceptorFilter //nolint:staticcheck
 }
 
 func defaultOptions() *options {
@@ -78,7 +78,7 @@ type Option interface {
 }
 
 type filterOption struct {
-	filter otelgrpc.InterceptorFilter
+	filter otelgrpc.InterceptorFilter //nolint:staticcheck
 }
 
 func (f filterOption) apply(o *options) { o.filter = f.filter }
@@ -91,6 +91,6 @@ func (f filterOption) apply(o *options) { o.filter = f.filter }
 //	iongrpc.ServerHandler(iongrpc.WithFilter(func(info *otelgrpc.InterceptorInfo) bool {
 //	    return info.Method != "/grpc.health.v1.Health/Check"
 //	}))
-func WithFilter(filter otelgrpc.InterceptorFilter) Option {
+func WithFilter(filter otelgrpc.InterceptorFilter) Option { //nolint:staticcheck
 	return filterOption{filter: filter}
 }

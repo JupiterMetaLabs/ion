@@ -18,9 +18,6 @@ type zapLogger struct {
 	otelProvider *core.LogProvider
 }
 
-// zapLogFunc is a function type for zap's log methods.
-type zapLogFunc func(msg string, fields ...zap.Field)
-
 // prepareFields consolidates context extraction and field conversion.
 // It returns a slice of zap fields ready for logging.
 func (l *zapLogger) prepareFields(ctx context.Context, fields []Field) []zap.Field {
