@@ -1,7 +1,6 @@
 package core
 
 import (
-	"encoding/base64"
 	"fmt"
 	"os"
 	"strings"
@@ -30,23 +29,8 @@ func NewZapLogger(cfg config.Config) (*ZapFactoryResult, error) {
 
 	// 1. Setup OTEL if enabled
 	if cfg.OTEL.Enabled && cfg.OTEL.Endpoint != "" {
-		// Handle Basic Auth - inject Authorization header
-		headers := cfg.OTEL.Headers
-		if headers == nil {
-			headers = make(map[string]string)
-		}
-		if cfg.OTEL.Username != "" && cfg.OTEL.Password != "" {
-			auth := fmt.Sprintf("%s:%s", cfg.OTEL.Username, cfg.OTEL.Password)
-			encodedAuth := base64.StdEncoding.EncodeToString([]byte(auth))
-
-			// Use lowercase "authorization" for gRPC to comply with HTTP/2 and gRPC metadata specs.
-			key := "Authorization"
-			if cfg.OTEL.Protocol != "http" {
-				key = "authorization"
-			}
-			headers[key] = "Basic " + encodedAuth
-		}
-		cfg.OTEL.Headers = headers // Update in place for setup
+		// Inject Basic Auth header if credentials provided
+		cfg.OTEL.Headers = injectBasicAuth(cfg.OTEL.Headers, cfg.OTEL.Username, cfg.OTEL.Password, cfg.OTEL.Protocol)
 
 		otelProvider, err = SetupLogProvider(cfg.OTEL, cfg.ServiceName, cfg.Version)
 		if err != nil {

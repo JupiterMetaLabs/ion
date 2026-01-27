@@ -99,6 +99,10 @@ func SetupLogProvider(cfg config.OTELConfig, serviceName, version string) (*LogP
 	}
 
 	var exporter sdklog.Exporter
+
+	// Inject Basic Auth header if credentials provided
+	cfg.Headers = injectBasicAuth(cfg.Headers, cfg.Username, cfg.Password, cfg.Protocol)
+
 	switch cfg.Protocol {
 	case "http":
 		exporter, err = createHTTPLogExporter(ctx, endpoint, insecure, cfg)
@@ -143,21 +147,8 @@ func SetupTracerProvider(cfg config.TracingConfig, serviceName, version string) 
 		return nil, nil
 	}
 
-	// Handle Basic Auth - inject Authorization header
-	if cfg.Headers == nil {
-		cfg.Headers = make(map[string]string)
-	}
-	if cfg.Username != "" && cfg.Password != "" {
-		auth := fmt.Sprintf("%s:%s", cfg.Username, cfg.Password)
-		encodedAuth := base64.StdEncoding.EncodeToString([]byte(auth))
-
-		// Use lowercase "authorization" for gRPC to comply with HTTP/2 and gRPC metadata specs.
-		key := "Authorization"
-		if cfg.Protocol != "http" {
-			key = "authorization"
-		}
-		cfg.Headers[key] = "Basic " + encodedAuth
-	}
+	// Inject Basic Auth header if credentials provided
+	cfg.Headers = injectBasicAuth(cfg.Headers, cfg.Username, cfg.Password, cfg.Protocol)
 
 	if DebugOTEL {
 		// We could use an internal logger here, but for now we silence it or return warnings.
@@ -361,4 +352,25 @@ func processEndpoint(endpoint string, configInsecure bool) (string, bool, error)
 	}
 
 	return host, insecure, nil
+}
+
+// injectBasicAuth adds a Basic Authorization header to the provided headers map
+// if username and password are provided. Returns the updated headers map.
+// Protocol should be "http" or "grpc" - gRPC requires lowercase "authorization" key.
+func injectBasicAuth(headers map[string]string, username, password, protocol string) map[string]string {
+	if headers == nil {
+		headers = make(map[string]string)
+	}
+	if username != "" && password != "" {
+		auth := fmt.Sprintf("%s:%s", username, password)
+		encodedAuth := base64.StdEncoding.EncodeToString([]byte(auth))
+
+		// Use lowercase "authorization" for gRPC to comply with HTTP/2 and gRPC metadata specs.
+		key := "Authorization"
+		if protocol != "http" {
+			key = "authorization"
+		}
+		headers[key] = "Basic " + encodedAuth
+	}
+	return headers
 }

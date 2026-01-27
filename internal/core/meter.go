@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"time"
 
@@ -16,7 +15,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	insecurecreds "google.golang.org/grpc/credentials/insecure"
 )
 
 // MeterProvider wraps the OTEL MeterProvider.
@@ -59,19 +58,13 @@ func SetupMeterProvider(cfg config.MetricsConfig, serviceName, version string) (
 		return nil, fmt.Errorf("failed to create OTEL resource: %w", err)
 	}
 
-	// Headers handling (Basic Auth)
-	headers := cfg.Headers
-	if headers == nil {
-		headers = make(map[string]string)
-	}
-	if cfg.Username != "" && cfg.Password != "" {
-		auth := fmt.Sprintf("%s:%s", cfg.Username, cfg.Password)
-		encodedAuth := base64.StdEncoding.EncodeToString([]byte(auth))
-		key := "Authorization"
-		if cfg.Protocol != "http" {
-			key = "authorization"
-		}
-		headers[key] = "Basic " + encodedAuth
+	// Inject Basic Auth header if credentials provided
+	headers := injectBasicAuth(cfg.Headers, cfg.Username, cfg.Password, cfg.Protocol)
+
+	// Parse/Sanitize endpoint
+	endpoint, insecure, err := processEndpoint(cfg.Endpoint, cfg.Insecure)
+	if err != nil {
+		return nil, fmt.Errorf("invalid metrics endpoint: %w", err)
 	}
 
 	// Exporter
@@ -79,9 +72,9 @@ func SetupMeterProvider(cfg config.MetricsConfig, serviceName, version string) (
 	switch cfg.Protocol {
 	case "http":
 		opts := []otlpmetrichttp.Option{
-			otlpmetrichttp.WithEndpoint(cfg.Endpoint),
+			otlpmetrichttp.WithEndpoint(endpoint),
 		}
-		if cfg.Insecure {
+		if insecure {
 			opts = append(opts, otlpmetrichttp.WithInsecure())
 		}
 		if len(headers) > 0 {
@@ -94,11 +87,11 @@ func SetupMeterProvider(cfg config.MetricsConfig, serviceName, version string) (
 	default:
 		// Default to gRPC
 		opts := []otlpmetricgrpc.Option{
-			otlpmetricgrpc.WithEndpoint(cfg.Endpoint),
+			otlpmetricgrpc.WithEndpoint(endpoint),
 		}
-		if cfg.Insecure {
+		if insecure {
 			opts = append(opts, otlpmetricgrpc.WithInsecure())
-			opts = append(opts, otlpmetricgrpc.WithDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
+			opts = append(opts, otlpmetricgrpc.WithDialOption(grpc.WithTransportCredentials(insecurecreds.NewCredentials())))
 		}
 		if len(headers) > 0 {
 			opts = append(opts, otlpmetricgrpc.WithHeaders(headers))

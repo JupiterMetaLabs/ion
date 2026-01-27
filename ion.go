@@ -131,6 +131,7 @@ func New(cfg Config) (*Ion, []Warning, error) {
 				Component: "tracing",
 				Err:       fmt.Errorf("failed to init tracing: %w (tracing disabled)", err),
 			})
+		} else if tp != nil {
 			ion.tracerProvider = tp
 			ion.tracingEnabled = true
 		}
