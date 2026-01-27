@@ -142,9 +142,9 @@ Controls the OpenTelemetry **Logs** Exporter.
 |-------|------|---------|-------------|
 | `Enabled` | `bool` | `false` | Enables log export to Collector. |
 | `Level` | `string` | `Config.Level` | **(Internal)** Respects the main `Level` config (e.g. `debug` or `info`). |
-| `Endpoint` | `string` | `""` | `host:port` (e.g., `localhost:4317`). |
+| `Endpoint` | `string` | `""` | `host:port` or URL (e.g. `https://otel.io`). URL schemes override `Insecure` setting. |
 | `Protocol` | `string` | `"grpc"` | `"grpc"` (recommended) or `"http"`. |
-| `Insecure` | `bool` | `false` | If true, disables TLS (dev only). |
+| `Insecure` | `bool` | `false` | If true, disables TLS (dev only). Ignored if Endpoint starts with `https://`. |
 | `Username` | `string` | `""` | Basic Auth Username. |
 | `Password` | `string` | `""` | Basic Auth Password. |
 | `BatchSize` | `int` | `512` | Max logs per export batch. |

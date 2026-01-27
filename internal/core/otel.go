@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +23,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.32.0"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	insecurecreds "google.golang.org/grpc/credentials/insecure"
 )
 
 // DebugOTEL enables debug logging for OTEL setup.
@@ -91,12 +92,18 @@ func SetupLogProvider(cfg config.OTELConfig, serviceName, version string) (*LogP
 	}
 
 	// Exporter
+	// Parse/Sanitize endpoint
+	endpoint, insecure, err := processEndpoint(cfg.Endpoint, cfg.Insecure)
+	if err != nil {
+		return nil, fmt.Errorf("invalid OTEL endpoint: %w", err)
+	}
+
 	var exporter sdklog.Exporter
 	switch cfg.Protocol {
 	case "http":
-		exporter, err = createHTTPLogExporter(ctx, cfg)
+		exporter, err = createHTTPLogExporter(ctx, endpoint, insecure, cfg)
 	default:
-		exporter, err = createGRPCLogExporter(ctx, cfg)
+		exporter, err = createGRPCLogExporter(ctx, endpoint, insecure, cfg)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OTEL log exporter: %w", err)
@@ -173,12 +180,18 @@ func SetupTracerProvider(cfg config.TracingConfig, serviceName, version string) 
 	}
 
 	// Exporter
+	// Parse/Sanitize endpoint
+	endpoint, insecure, err := processEndpoint(cfg.Endpoint, cfg.Insecure)
+	if err != nil {
+		return nil, fmt.Errorf("invalid OTEL endpoint: %w", err)
+	}
+
 	var exporter sdktrace.SpanExporter
 	switch cfg.Protocol {
 	case "http":
-		exporter, err = createHTTPTraceExporter(ctx, cfg)
+		exporter, err = createHTTPTraceExporter(ctx, endpoint, insecure, cfg)
 	default:
-		exporter, err = createGRPCTraceExporter(ctx, cfg)
+		exporter, err = createGRPCTraceExporter(ctx, endpoint, insecure, cfg)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
@@ -220,12 +233,12 @@ func SetupTracerProvider(cfg config.TracingConfig, serviceName, version string) 
 
 // --- Helpers ---
 
-func createGRPCLogExporter(ctx context.Context, cfg config.OTELConfig) (sdklog.Exporter, error) {
+func createGRPCLogExporter(ctx context.Context, endpoint string, insecure bool, cfg config.OTELConfig) (sdklog.Exporter, error) {
 	opts := []otlploggrpc.Option{
-		otlploggrpc.WithEndpoint(cfg.Endpoint),
+		otlploggrpc.WithEndpoint(endpoint),
 	}
-	if cfg.Insecure {
-		opts = append(opts, otlploggrpc.WithDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
+	if insecure {
+		opts = append(opts, otlploggrpc.WithDialOption(grpc.WithTransportCredentials(insecurecreds.NewCredentials())))
 		opts = append(opts, otlploggrpc.WithInsecure())
 	}
 	if cfg.Timeout > 0 {
@@ -237,11 +250,11 @@ func createGRPCLogExporter(ctx context.Context, cfg config.OTELConfig) (sdklog.E
 	return otlploggrpc.New(ctx, opts...)
 }
 
-func createHTTPLogExporter(ctx context.Context, cfg config.OTELConfig) (sdklog.Exporter, error) {
+func createHTTPLogExporter(ctx context.Context, endpoint string, insecure bool, cfg config.OTELConfig) (sdklog.Exporter, error) {
 	opts := []otlploghttp.Option{
-		otlploghttp.WithEndpoint(cfg.Endpoint),
+		otlploghttp.WithEndpoint(endpoint),
 	}
-	if cfg.Insecure {
+	if insecure {
 		opts = append(opts, otlploghttp.WithInsecure())
 	}
 	if cfg.Timeout > 0 {
@@ -253,13 +266,13 @@ func createHTTPLogExporter(ctx context.Context, cfg config.OTELConfig) (sdklog.E
 	return otlploghttp.New(ctx, opts...)
 }
 
-func createGRPCTraceExporter(ctx context.Context, cfg config.TracingConfig) (sdktrace.SpanExporter, error) {
+func createGRPCTraceExporter(ctx context.Context, endpoint string, insecure bool, cfg config.TracingConfig) (sdktrace.SpanExporter, error) {
 	opts := []otlptracegrpc.Option{
-		otlptracegrpc.WithEndpoint(cfg.Endpoint),
+		otlptracegrpc.WithEndpoint(endpoint),
 	}
-	if cfg.Insecure {
+	if insecure {
 		opts = append(opts, otlptracegrpc.WithInsecure())
-		opts = append(opts, otlptracegrpc.WithDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())))
+		opts = append(opts, otlptracegrpc.WithDialOption(grpc.WithTransportCredentials(insecurecreds.NewCredentials())))
 	}
 	if len(cfg.Headers) > 0 {
 		opts = append(opts, otlptracegrpc.WithHeaders(cfg.Headers))
@@ -270,11 +283,11 @@ func createGRPCTraceExporter(ctx context.Context, cfg config.TracingConfig) (sdk
 	return otlptracegrpc.New(ctx, opts...)
 }
 
-func createHTTPTraceExporter(ctx context.Context, cfg config.TracingConfig) (sdktrace.SpanExporter, error) {
+func createHTTPTraceExporter(ctx context.Context, endpoint string, insecure bool, cfg config.TracingConfig) (sdktrace.SpanExporter, error) {
 	opts := []otlptracehttp.Option{
-		otlptracehttp.WithEndpoint(cfg.Endpoint),
+		otlptracehttp.WithEndpoint(endpoint),
 	}
-	if cfg.Insecure {
+	if insecure {
 		opts = append(opts, otlptracehttp.WithInsecure())
 	}
 	if len(cfg.Headers) > 0 {
@@ -302,4 +315,50 @@ func parseSampler(s string) sdktrace.Sampler {
 	default:
 		return sdktrace.AlwaysSample()
 	}
+}
+
+// processEndpoint parses the endpoint URL to determine the host:port and insecure setting.
+// If the endpoint contains a scheme (http/https), it overrides the insecure config.
+// Returns the sanitized endpoint (host:port), the final insecure flag, and any error.
+func processEndpoint(endpoint string, configInsecure bool) (string, bool, error) {
+	if endpoint == "" {
+		return "", configInsecure, nil
+	}
+
+	// If no scheme, assume it's already host:port or similar, keep config setting.
+	if !strings.Contains(endpoint, "://") {
+		return endpoint, configInsecure, nil
+	}
+
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to parse endpoint url: %w", err)
+	}
+
+	host := u.Host
+	// If host is empty but path is not, it might be a malformed URL or just path.
+	// But url.Parse("example.com:4317") parses as path "example.com:4317" with empty host if no scheme.
+	// We handled no-scheme above. So here we expect a scheme.
+
+	insecure := configInsecure
+	switch u.Scheme {
+	case "http":
+		insecure = true
+	case "https":
+		insecure = false
+	default:
+		return "", false, fmt.Errorf("unsupported scheme %q (only http:// and https:// allowed)", u.Scheme)
+	}
+
+	// Ensure port if missing for http/https
+	if u.Port() == "" {
+		switch u.Scheme {
+		case "http":
+			host = host + ":80"
+		case "https":
+			host = host + ":443"
+		}
+	}
+
+	return host, insecure, nil
 }
