@@ -61,6 +61,10 @@ type ConsoleConfig struct {
 	// ErrorsToStderr sends warn/error/fatal to stderr, others to stdout.
 	// Default: true
 	ErrorsToStderr bool `yaml:"errors_to_stderr" json:"errors_to_stderr"`
+
+	// Level overrides the global log level for console output.
+	// Optional. If empty, uses global Level.
+	Level string `yaml:"level" json:"level"`
 }
 
 // FileConfig configures file output with rotation.
@@ -88,6 +92,10 @@ type FileConfig struct {
 	// Compress enables gzip compression of rotated log files.
 	// Default: true
 	Compress bool `yaml:"compress" json:"compress"`
+
+	// Level overrides the global log level for file output.
+	// Optional. If empty, uses global Level.
+	Level string `yaml:"level" json:"level"`
 }
 
 // OTELConfig configures OpenTelemetry log export.
@@ -132,6 +140,10 @@ type OTELConfig struct {
 	// Attributes are additional resource attributes for OTEL.
 	// Example: {"environment": "production", "chain": "solana"}
 	Attributes map[string]string `yaml:"attributes" json:"attributes"`
+
+	// Level overrides the global log level for OTEL export.
+	// Optional. If empty, uses global Level.
+	Level string `yaml:"level" json:"level"`
 }
 
 // TracingConfig configures distributed tracing.
@@ -402,6 +414,21 @@ func (c Config) Validate() error {
 		if c.Metrics.Temporality != "" && c.Metrics.Temporality != "cumulative" && c.Metrics.Temporality != "delta" {
 			errs = append(errs, fmt.Sprintf("invalid metrics temporality %q (use: cumulative, delta)", c.Metrics.Temporality))
 		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("config validation failed: %s", strings.Join(errs, "; "))
+	}
+
+	// Validate sink levels if present
+	if c.Console.Level != "" && !validLevels[strings.ToLower(c.Console.Level)] {
+		errs = append(errs, fmt.Sprintf("invalid console level %q", c.Console.Level))
+	}
+	if c.File.Level != "" && !validLevels[strings.ToLower(c.File.Level)] {
+		errs = append(errs, fmt.Sprintf("invalid file level %q", c.File.Level))
+	}
+	if c.OTEL.Level != "" && !validLevels[strings.ToLower(c.OTEL.Level)] {
+		errs = append(errs, fmt.Sprintf("invalid otel level %q", c.OTEL.Level))
 	}
 
 	if len(errs) > 0 {

@@ -25,7 +25,44 @@ func NewZapLogger(cfg config.Config) (*ZapFactoryResult, error) {
 	var otelCore zapcore.Core
 	var err error
 
-	atomicLevel := zap.NewAtomicLevelAt(parseLevel(cfg.Level))
+	// Determine global level
+	globalLevel := parseLevel(cfg.Level)
+
+	// Determine sink-specific levels (defaulting to global)
+	consoleLevel := globalLevel
+	if cfg.Console.Level != "" {
+		consoleLevel = parseLevel(cfg.Console.Level)
+	}
+
+	fileLevel := globalLevel
+	if cfg.File.Level != "" {
+		fileLevel = parseLevel(cfg.File.Level)
+	}
+
+	otelLevel := globalLevel
+	if cfg.OTEL.Level != "" {
+		otelLevel = parseLevel(cfg.OTEL.Level)
+	}
+
+	// Calculate the minimum level across all ENABLED sinks.
+	// This ensures the main atomicLevel (used for SetLevel and early filtering)
+	// allows logs to pass if ANY sink needs them.
+	minLevel := globalLevel // Start with global (safe default)
+
+	// If a sink is enabled, check if its level is lower (more verbose)
+	// zapcore.DebugLevel (-1) < zapcore.InfoLevel (0)
+	if cfg.Console.Enabled && consoleLevel < minLevel {
+		minLevel = consoleLevel
+	}
+	if cfg.File.Enabled && fileLevel < minLevel {
+		minLevel = fileLevel
+	}
+	if cfg.OTEL.Enabled && otelLevel < minLevel {
+		minLevel = otelLevel
+	}
+
+	// The atomicLevel acts as the master gatekeeper in logger_impl.go
+	atomicLevel := zap.NewAtomicLevelAt(minLevel)
 
 	// 1. Setup OTEL if enabled
 	if cfg.OTEL.Enabled && cfg.OTEL.Endpoint != "" {
@@ -50,7 +87,8 @@ func NewZapLogger(cfg config.Config) (*ZapFactoryResult, error) {
 
 	// Console
 	if cfg.Console.Enabled {
-		consoleCores := buildConsoleCores(cfg, atomicLevel)
+		// Use specific consoleLevel for console cores
+		consoleCores := buildConsoleCores(cfg, consoleLevel)
 		for _, c := range consoleCores {
 			cores = append(cores, NewFilteringCore(c, SentinelKey))
 		}
@@ -58,7 +96,8 @@ func NewZapLogger(cfg config.Config) (*ZapFactoryResult, error) {
 
 	// File
 	if cfg.File.Enabled && cfg.File.Path != "" {
-		fileCore := buildFileCore(cfg, atomicLevel)
+		// Use specific fileLevel for file core
+		fileCore := buildFileCore(cfg, fileLevel)
 		if fileCore != nil {
 			cores = append(cores, NewFilteringCore(fileCore, SentinelKey))
 		}
@@ -66,9 +105,8 @@ func NewZapLogger(cfg config.Config) (*ZapFactoryResult, error) {
 
 	// OTEL
 	if otelCore != nil {
-		// Wrap with level enforcer to ensure configured level (e.g. Debug) is respected
-		// even if otelzap defaults to Info.
-		otelCore = &levelEnforcer{Core: otelCore, level: atomicLevel}
+		// Use specific otelLevel for OTEL core
+		otelCore = &levelEnforcer{Core: otelCore, level: otelLevel}
 
 		// Filter SentinelKey (internal context carrier) but allow trace_id/span_id
 		// to pass through as explicit attributes. This ensures they are present in the
@@ -130,24 +168,25 @@ func buildZapOptions(cfg config.Config) []zap.Option {
 	return opts
 }
 
-func buildConsoleCores(cfg config.Config, level zap.AtomicLevel) []zapcore.Core {
+func buildConsoleCores(cfg config.Config, level zapcore.LevelEnabler) []zapcore.Core {
 	encoder := buildConsoleEncoder(cfg)
 
 	if cfg.Console.ErrorsToStderr {
 		// stdout: [configLevel, Warn)
 		stdoutLevel := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-			return lvl >= level.Level() && lvl < zapcore.WarnLevel
+			return level.Enabled(lvl) && lvl < zapcore.WarnLevel
 		})
 
 		// stderr: [Warn, Fatal] AND >= configLevel
 		// e.g., if config=Error, stderr only shows Error+ (Warn is suppressed).
 		// if config=Debug, stderr shows Warn+.
 		stderrLevel := zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-			min := level.Level()
-			if min > zapcore.WarnLevel {
-				return lvl >= min
-			}
-			return lvl >= zapcore.WarnLevel
+			// Helper to check minimum enabled level of the enabler
+			// We can't easily get the "min" from a generic LevelEnabler,
+			// but we can check if it's enabled for the current lvl.
+			//
+			// Rule: Log to stderr if it IS enabled by config AND it is >= Warn
+			return level.Enabled(lvl) && lvl >= zapcore.WarnLevel
 		})
 
 		return []zapcore.Core{
@@ -184,7 +223,7 @@ func buildConsoleEncoder(cfg config.Config) zapcore.Encoder {
 	return zapcore.NewJSONEncoder(encoderCfg)
 }
 
-func buildFileCore(cfg config.Config, level zap.AtomicLevel) zapcore.Core {
+func buildFileCore(cfg config.Config, level zapcore.LevelEnabler) zapcore.Core {
 	writer := config.NewFileWriter(cfg.File)
 	if writer == nil {
 		return nil

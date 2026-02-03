@@ -124,6 +124,7 @@ Ion uses a comprehensive configuration struct for behavior control. This maps 1:
 | `Format` | `string` | `"json"` | `"json"` (production) or `"pretty"` (human-readable). |
 | `Color` | `bool` | `true` | Enables ANSI colors (only references `pretty` format). |
 | `ErrorsToStderr` | `bool` | `true` | Writes `warn`/`error`/`fatal` to stderr, others to stdout. |
+| `Level` | `string` | `""` | Optional override for console log level. Inherits global level if empty. |
 
 ### File Configuration (`ion.FileConfig`)
 | Field | Type | Default | Description |
@@ -134,6 +135,7 @@ Ion uses a comprehensive configuration struct for behavior control. This maps 1:
 | `MaxBackups` | `int` | `5` | Number of old files to keep. |
 | `MaxAgeDays` | `int` | `7` | Max age of files to keep. |
 | `Compress` | `bool` | `true` | Gzip old log files. |
+| `Level` | `string` | `""` | Optional override for file log level. Inherits global level if empty. |
 
 ### OTEL Configuration (`ion.OTELConfig`)
 Controls the OpenTelemetry **Logs** Exporter.
@@ -141,7 +143,7 @@ Controls the OpenTelemetry **Logs** Exporter.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `Enabled` | `bool` | `false` | Enables log export to Collector. |
-| `Level` | `string` | `Config.Level` | **(Internal)** Respects the main `Level` config (e.g. `debug` or `info`). |
+| `Level` | `string` | `""` | Optional override for OTEL log level. Inherits global level if empty. |
 | `Endpoint` | `string` | `""` | `host:port` or URL (e.g. `https://otel.io`). URL schemes override `Insecure` setting. |
 | `Protocol` | `string` | `"grpc"` | `"grpc"` (recommended) or `"http"`. |
 | `Insecure` | `bool` | `false` | If true, disables TLS (dev only). Ignored if Endpoint starts with `https://`. |
