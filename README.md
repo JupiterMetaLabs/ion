@@ -121,7 +121,7 @@ Ion uses a comprehensive configuration struct for behavior control. This maps 1:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `Enabled` | `bool` | `true` | If false, stdout/stderr is silenced. |
-| `Format` | `string` | `"json"` | `"json"` (production) or `"pretty"` (human-readable). |
+| `Format` | `string` | `"json"` | `"json"`, `"pretty"`, or `"systemd"` (optimized for Journald). |
 | `Color` | `bool` | `true` | Enables ANSI colors (only references `pretty` format). |
 | `ErrorsToStderr` | `bool` | `true` | Writes `warn`/`error`/`fatal` to stderr, others to stdout. |
 | `Level` | `string` | `""` | Optional override for console log level. Inherits global level if empty. |
@@ -385,6 +385,14 @@ cfg.Console.Enabled = false // Disable local IO
 cfg.OTEL.Enabled = true
 cfg.OTEL.Endpoint = "localhost:4317"
 cfg.OTEL.Protocol = "grpc"
+```
+
+### 4. The "Systemd Native" (Bare Metal)
+Best for: Linux services running under systemd/journald.
+```go
+cfg := ion.Default()
+cfg.Console.Format = "systemd" // <6>Prefixes, No Timestamps
+cfg.Console.ErrorsToStderr = true
 ```
 
 ### 4. The "Full Stack" (Console + OTEL + Tracing)

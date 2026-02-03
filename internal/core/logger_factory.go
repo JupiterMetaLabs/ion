@@ -201,19 +201,62 @@ func buildConsoleCores(cfg config.Config, level zapcore.LevelEnabler) []zapcore.
 }
 
 func buildConsoleEncoder(cfg config.Config) zapcore.Encoder {
-	if cfg.Console.Format == "pretty" || (cfg.Development && cfg.Console.Format == "") {
-		encoderCfg := zap.NewDevelopmentEncoderConfig()
-		if cfg.Console.Color {
-			encoderCfg.EncodeLevel = zapcore.CapitalColorLevelEncoder
-			encoderCfg.EncodeTime = zapcore.TimeEncoderOfLayout("15:04:05.000")
-		} else {
-			encoderCfg.EncodeLevel = zapcore.CapitalLevelEncoder
-			encoderCfg.EncodeTime = zapcore.ISO8601TimeEncoder
+	switch cfg.Console.Format {
+	case "systemd":
+		return buildSystemdEncoder()
+	case "pretty":
+		return buildPrettyEncoder(cfg)
+	case "json":
+		return buildJSONEncoder()
+	default:
+		// Smart defaults based on environment
+		if cfg.Development {
+			return buildPrettyEncoder(cfg)
 		}
-		encoderCfg.EncodeCaller = zapcore.ShortCallerEncoder
-		return zapcore.NewConsoleEncoder(encoderCfg)
+		return buildJSONEncoder()
+	}
+}
+
+func buildSystemdEncoder() zapcore.Encoder {
+	encoderCfg := zap.NewDevelopmentEncoderConfig()
+	encoderCfg.TimeKey = ""   // Disable timestamp (Systemd handles it)
+	encoderCfg.CallerKey = "" // Disable caller (Keep it clean)
+	encoderCfg.EncodeCaller = nil
+
+	// Custom Syslog Priority mapping
+	encoderCfg.EncodeLevel = func(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
+		switch l {
+		case zapcore.DebugLevel:
+			enc.AppendString("<7>") // Debug
+		case zapcore.InfoLevel:
+			enc.AppendString("<6>") // Info
+		case zapcore.WarnLevel:
+			enc.AppendString("<4>") // Warning
+		case zapcore.ErrorLevel:
+			enc.AppendString("<3>") // Error
+		case zapcore.DPanicLevel, zapcore.PanicLevel, zapcore.FatalLevel:
+			enc.AppendString("<2>") // Critical
+		}
 	}
 
+	// Use ConsoleEncoder (tabs) for the message part
+	return zapcore.NewConsoleEncoder(encoderCfg)
+}
+
+func buildPrettyEncoder(cfg config.Config) zapcore.Encoder {
+	encoderCfg := zap.NewDevelopmentEncoderConfig()
+	if cfg.Console.Color {
+		encoderCfg.EncodeLevel = zapcore.CapitalColorLevelEncoder
+		encoderCfg.EncodeTime = zapcore.TimeEncoderOfLayout("15:04:05.000")
+	} else {
+		encoderCfg.EncodeLevel = zapcore.CapitalLevelEncoder
+		encoderCfg.EncodeTime = zapcore.ISO8601TimeEncoder
+	}
+	encoderCfg.EncodeCaller = zapcore.ShortCallerEncoder
+	return zapcore.NewConsoleEncoder(encoderCfg)
+}
+
+func buildJSONEncoder() zapcore.Encoder {
 	encoderCfg := zap.NewProductionEncoderConfig()
 	encoderCfg.TimeKey = "timestamp"
 	encoderCfg.EncodeTime = zapcore.ISO8601TimeEncoder

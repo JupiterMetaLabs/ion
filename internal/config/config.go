@@ -367,8 +367,8 @@ func (c Config) Validate() error {
 	}
 
 	// Validate console format
-	if c.Console.Format != "" && c.Console.Format != "json" && c.Console.Format != "pretty" {
-		errs = append(errs, fmt.Sprintf("invalid console format %q (use: json, pretty)", c.Console.Format))
+	if c.Console.Format != "" && c.Console.Format != "json" && c.Console.Format != "pretty" && c.Console.Format != "systemd" {
+		errs = append(errs, fmt.Sprintf("invalid console format %q (use: json, pretty, systemd)", c.Console.Format))
 	}
 
 	// Validate file config
