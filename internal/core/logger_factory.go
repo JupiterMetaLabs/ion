@@ -217,29 +217,47 @@ func buildConsoleEncoder(cfg config.Config) zapcore.Encoder {
 	}
 }
 
+// syslogPriority maps Zap levels to syslog priority prefixes (RFC 5424).
+func syslogPriority(level zapcore.Level) string {
+	switch level {
+	case zapcore.DebugLevel:
+		return "<7>" // Debug
+	case zapcore.InfoLevel:
+		return "<6>" // Info
+	case zapcore.WarnLevel:
+		return "<4>" // Warning
+	case zapcore.ErrorLevel:
+		return "<3>" // Error
+	case zapcore.DPanicLevel, zapcore.PanicLevel, zapcore.FatalLevel:
+		return "<2>" // Critical
+	default:
+		return "<6>" // Default to Info
+	}
+}
+
+// buildSystemdEncoder creates a console encoder optimized for systemd/journald.
+// Output format: <N>LEVEL   Message   key=value key2=value2
+// - Priority prefix (<6>, <3>, etc.) is parsed and stripped by journald
+// - User sees: LEVEL   Message   key=value
+// - No timestamp (journald provides it)
+// - No caller (keeps output clean)
 func buildSystemdEncoder() zapcore.Encoder {
 	encoderCfg := zap.NewDevelopmentEncoderConfig()
-	encoderCfg.TimeKey = ""   // Disable timestamp (Systemd handles it)
-	encoderCfg.CallerKey = "" // Disable caller (Keep it clean)
+
+	// No timestamp - Journald handles it
+	encoderCfg.TimeKey = ""
+	encoderCfg.EncodeTime = nil
+
+	// No caller - keep it clean for ops debugging
+	encoderCfg.CallerKey = ""
 	encoderCfg.EncodeCaller = nil
 
-	// Custom Syslog Priority mapping
+	// Custom level encoder: outputs "<6>INFO" (priority prefix + text level)
+	// Journald strips the <6>, user sees "INFO"
 	encoderCfg.EncodeLevel = func(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
-		switch l {
-		case zapcore.DebugLevel:
-			enc.AppendString("<7>") // Debug
-		case zapcore.InfoLevel:
-			enc.AppendString("<6>") // Info
-		case zapcore.WarnLevel:
-			enc.AppendString("<4>") // Warning
-		case zapcore.ErrorLevel:
-			enc.AppendString("<3>") // Error
-		case zapcore.DPanicLevel, zapcore.PanicLevel, zapcore.FatalLevel:
-			enc.AppendString("<2>") // Critical
-		}
+		enc.AppendString(syslogPriority(l) + l.CapitalString())
 	}
 
-	// Use ConsoleEncoder (tabs) for the message part
 	return zapcore.NewConsoleEncoder(encoderCfg)
 }
 
