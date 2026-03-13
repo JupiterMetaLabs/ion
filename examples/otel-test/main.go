@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/JupiterMetaLabs/ion"
@@ -33,18 +34,26 @@ func main() {
 		},
 		OTEL: ion.OTELConfig{
 			Enabled:  true,
-			Endpoint: "localhost:4317",
+			Endpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 			Protocol: "grpc",
-			Insecure: true,
+			Insecure: true, // Default to insecure for local testing usually, user can override via scheme in endpoint or code change if needed
+			Username: os.Getenv("OTEL_EXPORTER_OTLP_HEADERS_USERNAME"),
+			Password: os.Getenv("OTEL_EXPORTER_OTLP_HEADERS_PASSWORD"),
 		},
 		Tracing: ion.TracingConfig{
-			Enabled:  true,
-			Endpoint: "localhost:4317",
+			Enabled: true,
+			// Fallback to OTEL endpoint if not set, but explicit here for clarity if needed
+			Endpoint: os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
 			Protocol: "grpc",
-			Insecure: true,
 			Sampler:  "always",
 		},
 	}
+
+	fmt.Printf("Configuring Ion with:\n")
+	fmt.Printf("  OTEL Endpoint: %s\n", cfg.OTEL.Endpoint)
+	fmt.Printf("  OTEL Protocol: %s\n", cfg.OTEL.Protocol)
+	fmt.Printf("  Service Name: %s\n", cfg.ServiceName)
+	fmt.Println("---------------------------------------------------")
 
 	app, warnings, err := ion.New(cfg)
 	if err != nil {

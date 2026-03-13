@@ -13,19 +13,21 @@ datasources:
     editable: false
     jsonData:
       derivedFields:
-        - name: TraceID
+        # Link logs to Tempo traces via "trace_id" field in JSON body
+        - name: trace_id
           matcherType: regex
-          matcherRegex: "trace_id\"?\\s*[:=]\\s*\"?(\\w+)"
-          datasourceUid: jaeger
-          urlDisplayLabel: View Trace
-          url: "$${__value.raw}"
+          # Matches "trace_id":"<hex>" or "trace_id": "<hex>" in JSON logs
+          matcherRegex: '"trace_id"\s*:\s*"(\w+)"'
+          datasourceUid: tempo
+          urlDisplayLabel: "View Trace"
+          url: "${__value.raw}"
 
-  - name: Jaeger
-    type: jaeger
-    uid: jaeger
+  - name: Tempo
+    type: tempo
+    uid: tempo
     access: proxy
     orgId: 1
-    url: http://jaeger:16686
+    url: http://tempo:3200
     basicAuth: false
     isDefault: true
     version: 1
@@ -36,8 +38,10 @@ datasources:
       tracesToLogs:
         datasourceUid: loki
         tags:
+          - job
           - service
+          - service_name
         filterByTraceID: true
         filterBySpanID: true
-        spanStartTimeShift: "-1s"
-        spanEndTimeShift: "1s"
+        spanStartTimeShift: "-1h"
+        spanEndTimeShift: "1h"

@@ -37,6 +37,17 @@ To maintain focus and stability, Ion explicitly avoids:
 
 ---
 
+## 🧭 Reference Observability Backend
+
+Ion is an instrumentation contract. To fully realize the value of Ion's unified telemetry, you must deploy a backend that respects its structured attributes and log-trace entanglement.
+
+**See the [Observability Reference Specification](docs/OBSERVABILITY.md)** for:
+*   Engineering invariants for "Ion-Certified" backends.
+*   Tiered recommendations (Honeycomb, SigNoz, LGTM stack).
+*   Standard OTel Collector configurations.
+
+---
+
 ## Installation
 
 ```bash
