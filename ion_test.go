@@ -44,7 +44,7 @@ func TestIon_Tracer(t *testing.T) {
 	}
 
 	// Create a span (no-op but should not panic)
-	//nolint:ineffassign // ctx update is standard tracing pattern, even if unused here
+
 	ctx, span := tracer.Start(ctx, "TestOperation")
 	if span == nil {
 		t.Fatal("expected non-nil span")
@@ -295,17 +295,11 @@ func TestIon_SetLevelPropagation(t *testing.T) {
 // that *Ion satisfies Logger.
 func TestIon_InterfaceCompliance(t *testing.T) {
 	app, _, _ := New(Default())
-
-	// Compile-time: this assignment must work
-	var l Logger = app
-	if l == nil {
-		t.Fatal("*Ion should satisfy Logger")
-	}
+	var _ Logger = app // compile-time check
 
 	// Runtime: Named() result should also satisfy Logger
-	child := l.Named("test")
-	var l2 Logger = child
-	if l2 == nil {
-		t.Fatal("Named() result should satisfy Logger")
+	child := app.Named("test")
+	if child == nil {
+		t.Fatal("Named() result should satisfy Logger interface")
 	}
 }

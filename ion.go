@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/JupiterMetaLabs/ion/internal/core"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
+
+	"github.com/JupiterMetaLabs/ion/internal/core"
 )
 
 // Compile-time interface compliance check.
@@ -49,7 +50,7 @@ var _ Logger = (*Ion)(nil)
 //	counter.Add(ctx, 1)
 type Ion struct {
 	*zapLogger // Embedded: promotes Debug, Info, Warn, Error, Critical, Sync, SetLevel, GetLevel.
-	           // Caller depth is unified: all log calls are 1 frame above zap, matching AddCallerSkip(1).
+	// Caller depth is unified: all log calls are 1 frame above zap, matching AddCallerSkip(1).
 	serviceName    string
 	version        string
 	tracerProvider *core.TracerProvider
@@ -206,7 +207,7 @@ func New(cfg Config) (*Ion, []Warning, error) {
 // To get the *Ion directly without a type assertion, use [Ion.Child] instead.
 func (i *Ion) Named(name string) Logger {
 	return &Ion{
-		zapLogger:      i.zapLogger.namedInternal(name),
+		zapLogger:      i.namedInternal(name),
 		serviceName:    i.serviceName,
 		version:        i.version,
 		tracerProvider: i.tracerProvider,
@@ -225,7 +226,7 @@ func (i *Ion) Named(name string) Logger {
 // To get the *Ion directly without a type assertion, use [Ion.Child] instead.
 func (i *Ion) With(fields ...Field) Logger {
 	return &Ion{
-		zapLogger:      i.zapLogger.withInternal(fields...),
+		zapLogger:      i.withInternal(fields...),
 		serviceName:    i.serviceName,
 		version:        i.version,
 		tracerProvider: i.tracerProvider,
@@ -251,7 +252,7 @@ func (i *Ion) With(fields ...Field) Logger {
 // on a child will shut down shared providers, affecting the parent and all siblings.
 // In most applications, only the root Ion instance should be shut down.
 func (i *Ion) Child(name string, fields ...Field) *Ion {
-	child := i.zapLogger.namedInternal(name)
+	child := i.namedInternal(name)
 	if len(fields) > 0 {
 		child = child.withInternal(fields...)
 	}

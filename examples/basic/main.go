@@ -31,7 +31,7 @@ func example1_SimpleUsage() {
 	for _, w := range warnings {
 		log.Printf("ion warning: %v", w)
 	}
-	defer app.Sync()
+	defer func() { _ = app.Sync() }()
 
 	// Use Ion directly for logging
 	app.Info(ctx, "application started")
@@ -51,7 +51,7 @@ func example2_DependencyInjection() {
 	if err != nil {
 		log.Fatalf("Failed to create ion: %v", err)
 	}
-	defer app.Sync()
+	defer func() { _ = app.Sync() }()
 
 	// Pass a scoped child to components — preserves logging, tracing, and metrics
 	server := NewServer(app.Child("server"))
@@ -119,7 +119,7 @@ func example4_Metrics() {
 	if err != nil {
 		log.Fatalf("Failed to create ion: %v", err)
 	}
-	defer app.Shutdown(ctx)
+	defer func() { _ = app.Shutdown(ctx) }()
 
 	// Get a named meter
 	meter := app.Meter("example.metrics")

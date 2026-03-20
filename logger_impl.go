@@ -5,9 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/JupiterMetaLabs/ion/internal/core"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/JupiterMetaLabs/ion/internal/core"
 )
 
 // zapLogger implements Logger using Uber's Zap.

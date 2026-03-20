@@ -120,7 +120,7 @@ type OTELConfig struct {
 	Username string `yaml:"username" json:"username" env:"OTEL_USERNAME"`
 
 	// Password for Basic Authentication (optional).
-	Password string `yaml:"password" json:"password" env:"OTEL_PASSWORD"`
+	Password string `yaml:"password" json:"password" env:"OTEL_PASSWORD"` //nolint:gosec // Required for configuration binding
 
 	// Headers are additional headers to send (e.g., auth tokens).
 	Headers map[string]string `yaml:"headers" json:"headers"`
@@ -165,7 +165,7 @@ type TracingConfig struct {
 	Username string `yaml:"username" json:"username" env:"TRACING_USERNAME"`
 
 	// Password for Basic Authentication (optional).
-	Password string `yaml:"password" json:"password" env:"TRACING_PASSWORD"`
+	Password string `yaml:"password" json:"password" env:"TRACING_PASSWORD"` //nolint:gosec // Required for configuration binding
 
 	// Headers for authentication.
 	Headers map[string]string `yaml:"headers" json:"headers"`
@@ -208,7 +208,7 @@ type MetricsConfig struct {
 	Username string `yaml:"username" json:"username" env:"METRICS_USERNAME"`
 
 	// Password for Basic Authentication (optional).
-	Password string `yaml:"password" json:"password" env:"METRICS_PASSWORD"`
+	Password string `yaml:"password" json:"password" env:"METRICS_PASSWORD"` //nolint:gosec // Required for configuration binding
 
 	// Headers for authentication.
 	Headers map[string]string `yaml:"headers" json:"headers"`
