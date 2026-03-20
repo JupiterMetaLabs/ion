@@ -541,3 +541,4 @@ The [`examples/`](examples/) directory contains runnable demonstrations:
 ## License
 
 [MIT](LICENSE) © 2025 JupiterMeta Labs
+
