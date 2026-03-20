@@ -1,16 +1,27 @@
 package ion
 
-// FieldType roughly mirrors zapcore.FieldType
+import "time"
+
+// FieldType identifies the encoding strategy for a [Field] value.
+// Each type maps to a zero-allocation zap encoder where possible.
 type FieldType uint8
 
 const (
+	// UnknownType is the zero value; fields with this type are encoded via reflection.
 	UnknownType FieldType = iota
+	// StringType encodes a string value.
 	StringType
+	// Int64Type encodes a signed 64-bit integer.
 	Int64Type
+	// Uint64Type encodes an unsigned 64-bit integer (stored in Interface field).
 	Uint64Type
+	// Float64Type encodes a 64-bit floating-point number.
 	Float64Type
+	// BoolType encodes a boolean (stored as 0 or 1 in the Integer field).
 	BoolType
+	// ErrorType encodes an error value.
 	ErrorType
+	// AnyType encodes an arbitrary value via reflection. Use sparingly in hot paths.
 	AnyType
 )
 
@@ -79,6 +90,12 @@ func Bool(key string, value bool) Field {
 		i = 1
 	}
 	return Field{Key: key, Type: BoolType, Integer: i}
+}
+
+// Duration creates a duration field. The value is encoded as a string
+// using Go's standard duration formatting (e.g., "1.5s", "250ms").
+func Duration(key string, value time.Duration) Field {
+	return String(key, value.String())
 }
 
 // Err creates an error field with the standard key "error".

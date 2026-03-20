@@ -1,9 +1,3 @@
-// Package ion context helpers provide functions for propagating trace, request,
-// and user IDs through context.Context. These values are automatically extracted
-// and included in log entries.
-//
-// For OTEL tracing, trace_id and span_id are automatically extracted from the
-// span context. For non-OTEL scenarios, use WithTraceID to set manually.
 package ion
 
 import (
@@ -33,11 +27,15 @@ func WithRequestID(ctx context.Context, requestID string) context.Context {
 }
 
 // WithUserID adds a user ID to the context.
+// This ID will be automatically included in logs as the "user_id" field.
 func WithUserID(ctx context.Context, userID string) context.Context {
 	return context.WithValue(ctx, userIDKey, userID)
 }
 
-// WithTraceID adds a trace ID to the context (for non-OTEL scenarios).
+// WithTraceID adds a trace ID to the context for non-OTEL scenarios.
+// When OTEL tracing is active, trace IDs are extracted automatically from the span context;
+// use this only when you need manual trace correlation without an OTEL span.
+// This ID will be automatically included in logs as the "trace_id" field.
 func WithTraceID(ctx context.Context, traceID string) context.Context {
 	return context.WithValue(ctx, traceIDKey, traceID)
 }
@@ -53,6 +51,20 @@ func RequestIDFromContext(ctx context.Context) string {
 // UserIDFromContext extracts the user ID from context.
 func UserIDFromContext(ctx context.Context) string {
 	if v, ok := ctx.Value(userIDKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// TraceIDFromContext extracts the trace ID from context.
+// It first checks for an active OTEL span; if none, falls back to a manually set trace ID.
+// Returns an empty string if no trace ID is available.
+func TraceIDFromContext(ctx context.Context) string {
+	spanCtx := trace.SpanContextFromContext(ctx)
+	if spanCtx.IsValid() {
+		return spanCtx.TraceID().String()
+	}
+	if v, ok := ctx.Value(traceIDKey).(string); ok {
 		return v
 	}
 	return ""
@@ -75,22 +87,18 @@ func extractContextZapFields(ctx context.Context) []zap.Field {
 		fields = append(fields,
 			zap.String("trace_id", spanCtx.TraceID().String()),
 			zap.String("span_id", spanCtx.SpanID().String()),
-			// zap.String("traceID", spanCtx.TraceID().String()),
-			// zap.String("spanID", spanCtx.SpanID().String()),
 		)
 	} else {
 		// Fallback to manual trace ID if set
 		if traceID, ok := ctx.Value(traceIDKey).(string); ok && traceID != "" {
 			fields = make([]zap.Field, 0, 4)
 			fields = append(fields, zap.String("trace_id", traceID))
-			// fields = append(fields, zap.String("traceID", traceID))
 		}
 		if spanID, ok := ctx.Value(spanIDKey).(string); ok && spanID != "" {
 			if fields == nil {
 				fields = make([]zap.Field, 0, 4)
 			}
 			fields = append(fields, zap.String("span_id", spanID))
-			// fields = append(fields, zap.String("spanID", spanID))
 		}
 	}
 

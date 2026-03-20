@@ -40,8 +40,8 @@ func (l *zapLogger) Debug(ctx context.Context, msg string, fields ...Field) {
 	if !l.atomicLvl.Enabled(zapcore.DebugLevel) {
 		return
 	}
-	// Stack depth: User -> (*Ion).Debug -> (*zapLogger).Debug
-	// Zap skips: 2 (configured in core)
+	// Stack depth: User -> (*zapLogger).Debug (promoted via embedding in Ion)
+	// Zap skips: 1 (configured in core/logger_factory.go:152)
 	l.zap.Debug(msg, l.prepareFields(ctx, fields)...)
 }
 
@@ -87,16 +87,20 @@ func (l *zapLogger) Critical(ctx context.Context, msg string, err error, fields 
 	l.zap.Fatal(msg, zapFields...)
 }
 
+// With returns a child logger with additional fields attached to every log entry.
 func (l *zapLogger) With(fields ...Field) Logger {
-	return &zapLogger{
-		zap:          l.zap.With(toZapFields(fields)...),
-		config:       l.config,
-		atomicLvl:    l.atomicLvl,
-		otelProvider: l.otelProvider,
-	}
+	return l.withInternal(fields...)
 }
 
+// Named returns a named child logger. The name appears in logs as the "logger" field.
 func (l *zapLogger) Named(name string) Logger {
+	return l.namedInternal(name)
+}
+
+// namedInternal returns a concrete *zapLogger child with the given name.
+// Used by Ion.Named() to construct a child while preserving the concrete type
+// for wrapping in a new *Ion.
+func (l *zapLogger) namedInternal(name string) *zapLogger {
 	return &zapLogger{
 		zap:          l.zap.Named(name),
 		config:       l.config,
@@ -105,10 +109,29 @@ func (l *zapLogger) Named(name string) Logger {
 	}
 }
 
+// withInternal returns a concrete *zapLogger child with additional fields.
+// Used by Ion.With() to construct a child while preserving the concrete type
+// for wrapping in a new *Ion.
+func (l *zapLogger) withInternal(fields ...Field) *zapLogger {
+	return &zapLogger{
+		zap:          l.zap.With(toZapFields(fields)...),
+		config:       l.config,
+		atomicLvl:    l.atomicLvl,
+		otelProvider: l.otelProvider,
+	}
+}
+
+// Sync flushes any buffered log entries to the underlying writers.
 func (l *zapLogger) Sync() error {
 	return l.zap.Sync()
 }
 
+// Shutdown gracefully shuts down the logger, flushing any buffered logs
+// and closing the OTEL log provider if configured.
+//
+// When called on a child logger (created via Named or With on a bare Logger),
+// this only shuts down the logging subsystem. When called on an [Ion] instance,
+// Ion.Shutdown orchestrates shutdown of tracing, metrics, and logging together.
 func (l *zapLogger) Shutdown(ctx context.Context) error {
 	var errs []error
 
@@ -127,6 +150,9 @@ func (l *zapLogger) Shutdown(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+// SetLevel changes the log level at runtime. Valid levels: debug, info, warn, error, fatal.
+// Invalid level strings are silently ignored; the current level remains unchanged.
+// This change propagates to all child loggers that share the same atomic level.
 func (l *zapLogger) SetLevel(level string) {
 	var lvl zapcore.Level
 	if err := lvl.UnmarshalText([]byte(level)); err == nil {
@@ -134,12 +160,16 @@ func (l *zapLogger) SetLevel(level string) {
 	}
 }
 
+// GetLevel returns the current log level as a lowercase string (e.g., "info", "debug").
 func (l *zapLogger) GetLevel() string {
 	return l.atomicLvl.Level().String()
 }
 
 // --- Field conversion ---
 
+// convertField maps an Ion Field to a zap.Field.
+// Primitive types (String, Int64, Float64, Bool) use zero-allocation zap constructors.
+// Unknown types fall back to zap.Any which may allocate.
 func convertField(f Field) zap.Field {
 	switch f.Type {
 	case StringType:
@@ -162,6 +192,8 @@ func convertField(f Field) zap.Field {
 	}
 }
 
+// toZapFields converts a slice of Ion Fields to zap Fields.
+// Returns nil for empty input to avoid unnecessary allocation.
 func toZapFields(fields []Field) []zap.Field {
 	if len(fields) == 0 {
 		return nil

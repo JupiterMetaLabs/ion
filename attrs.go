@@ -1,18 +1,9 @@
-// Package ion provides unified observability for JupiterMeta applications.
-//
-// This file defines type aliases for OpenTelemetry attribute types used in
-// tracing and metrics. These aliases allow Ion's API to appear self-contained
-// in documentation while still using the standard OTel types underneath.
 package ion
 
 import "go.opentelemetry.io/otel/attribute"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Attribute Types (for Tracing and Metrics)
-// ─────────────────────────────────────────────────────────────────────────────
-//
 // Attr is a key-value pair used for trace span attributes and metric dimensions.
-// This is an alias for the OpenTelemetry attribute.KeyValue type.
+// This is an alias for the OpenTelemetry [attribute.KeyValue] type.
 //
 // Create attributes using the standard OTel constructors:
 //

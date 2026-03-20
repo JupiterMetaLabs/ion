@@ -7,7 +7,7 @@
 //
 //	import "github.com/JupiterMetaLabs/ion/fields"
 //
-//	logger.Info("transaction routed",
+//	logger.Info(ctx, "transaction routed",
 //	    fields.TxHash("abc123"),
 //	    fields.ShardID(5),
 //	    fields.LatencyMs(12.5),

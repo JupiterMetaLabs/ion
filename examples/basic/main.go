@@ -53,22 +53,28 @@ func example2_DependencyInjection() {
 	}
 	defer app.Sync()
 
-	// Pass Ion to components
-	server := NewServer(app)
+	// Pass a scoped child to components — preserves logging, tracing, and metrics
+	server := NewServer(app.Child("server"))
 	server.Start(ctx)
 }
 
 type Server struct {
-	log ion.Logger
+	app *ion.Ion // Full observability — logging, tracing, and metrics
 }
 
 func NewServer(app *ion.Ion) *Server {
-	// Create a child logger for this component
-	return &Server{log: app.Named("server")}
+	return &Server{app: app}
 }
 
 func (s *Server) Start(ctx context.Context) {
-	s.log.Info(ctx, "server listening", ion.Int("port", 8080))
+	s.app.Info(ctx, "server listening", ion.Int("port", 8080))
+
+	// Child has full access to tracing
+	tracer := s.app.Tracer("server.handler")
+	ctx, span := tracer.Start(ctx, "Start")
+	defer span.End()
+
+	s.app.Info(ctx, "server initialized")
 }
 
 // ============================================================================
@@ -215,21 +221,22 @@ func example6_ProductionSetup() {
 }
 
 func runProductionApp(ctx context.Context, app *ion.Ion) {
-	log := app.Named("main")
-	tracer := app.Tracer("order-service.main")
+	// Child preserves tracing and metrics — single entry point for component observability
+	svc := app.Child("main")
+	tracer := svc.Tracer("order-service.main")
 
 	// Create a span for the main operation
 	ctx, span := tracer.Start(ctx, "ApplicationRun")
 	defer span.End()
 
-	log.Info(ctx, "service started")
+	svc.Info(ctx, "service started")
 
 	// Simulate work
 	time.Sleep(100 * time.Millisecond)
 
 	// Simulate an error
 	err := errors.New("database connection lost")
-	log.Error(ctx, "critical failure", err, ion.String("component", "db"))
+	svc.Error(ctx, "critical failure", err, ion.String("component", "db"))
 
 	// Wait for signal
 	sigChan := make(chan os.Signal, 1)
@@ -241,9 +248,9 @@ func runProductionApp(ctx context.Context, app *ion.Ion) {
 		sigChan <- syscall.SIGTERM
 	}()
 
-	log.Info(ctx, "waiting for shutdown signal...")
+	svc.Info(ctx, "waiting for shutdown signal...")
 	<-sigChan
-	log.Info(ctx, "received shutdown signal, exiting...")
+	svc.Info(ctx, "received shutdown signal, exiting...")
 }
 
 // ============================================================================

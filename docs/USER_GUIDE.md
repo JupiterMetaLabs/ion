@@ -4,16 +4,17 @@ This guide details how to use Ion to build observable, high-reliability systems.
 
 ---
 
-## 1. Philosophy: The Two pillars
+## 1. Philosophy: The Three Pillars
 
-Ion is opinionated. It treats Logs and Traces as distinct but interlocked signals.
+Ion unifies three observability signals into a single API:
 
 | Signal | Purpose | Semantics | Target Audience |
 |--------|---------|-----------|-----------------|
 | **Logs** | "What happened?" | Discrete Events. High detail. 100% Reliability. | Humans (Debugging), Security Audits. |
 | **Traces** | "Where & How Long?" | Causal Chains. Sampled data. 99% Reliability. | SREs (Latency Analysis), Capacity Planners. |
+| **Metrics** | "How much?" | Aggregated Counters/Histograms. Push-based (OTLP). | Dashboards, Alerting, Capacity Planning. |
 
-**The Golden Rule**: *Logs give you the error details; Traces tell you which upstream service caused it.*
+**The Golden Rule**: *Logs give you the error details; Traces tell you which upstream service caused it; Metrics tell you when to look.*
 
 ---
 
@@ -92,8 +93,10 @@ In OpenTelemetry, "Recording an Error" and "Failing the Span" are separate.
 1.  `span.RecordError(err)`: Adds an event `"exception"` with the error stack.
     *   *Result*: You can see the error in the trace UI timeline.
     *   *Status*: Span is still "Unset" (Gray).
-2.  `span.SetStatus(codes.Error, msg)`: Marks the span as failed.
+2.  `span.SetStatus(ion.StatusError, msg)`: Marks the span as failed.
     *   *Result*: Error Rate metrics increment. Span turns RED.
+
+Ion provides `ion.StatusOK`, `ion.StatusError`, and `ion.StatusUnset` so you never need to import OTel codes.
 
 **Enterprise Policy**: You **MUST** do both for actual failures.
 
@@ -128,7 +131,7 @@ This is the #1 source of broken traces.
 ```go
 func (s *Service) AsyncEmail(reqCtx context.Context) {
     // 1. Capture the "Parent" trace link
-    link := trace.LinkFromContext(reqCtx)
+    link := ion.LinkFromContext(reqCtx)
     
     go func() {
         // 2. Start a FRESH root trace
@@ -151,31 +154,44 @@ func (s *Service) AsyncEmail(reqCtx context.Context) {
 
 This section demonstrates how `ion` flows across high-throughput nodes, P2P layers, and consensus engines.
 
-### 5.1 The "Node Architecture" Pattern (DI + Child Loggers)
-In a blockchain node, distinct subsystems (P2P, Consensus, Mempool) need distinct log identities.
+### 5.1 The "Node Architecture" Pattern (DI + Child)
+In a blockchain node, distinct subsystems (P2P, Consensus, Mempool) need scoped observability — logging, tracing, and metrics per component.
+
+**Recommended: Use `Child()` for full observability**
 
 ```go
 // main.go (Node Entrypoint)
-app, _, _ := ion.New(cfg) // name="ion-node"
+app, _, _ := ion.New(cfg)
 
-// Inject scoped loggers into major components
-p2pServer := p2p.NewServer(app.Named("p2p"))        // name="ion-node.p2p"
-consensus := engine.New(app.Named("consensus"))     // name="ion-node.consensus"
-mempool   := pool.New(app.Named("mempool"))         // name="ion-node.mempool"
+// Child() gives each component *Ion — logging, tracing, and metrics
+p2pServer := p2p.NewServer(app.Child("p2p"))        // logger="ion-node.p2p"
+consensus := engine.New(app.Child("consensus"))     // logger="ion-node.consensus"
+mempool   := pool.New(app.Child("mempool"))         // logger="ion-node.mempool"
 ```
 
 ```go
 // p2p/peer.go
 type Peer struct {
-    log ion.Logger // Will be "ion-node.p2p"
+    app *ion.Ion // Full observability — logging, tracing, metrics
     id  string
 }
 
 func (p *Peer) HandleHandshake(ctx context.Context) {
-    // Log inherits "ion-node.p2p", adds "peer_id" to THIS log only
-    // This allows filtering logs by specific peer across the entire session
-    p.log.Info(ctx, "handshake accepted", ion.String("peer_id", p.id))
+    p.app.Info(ctx, "handshake accepted", ion.String("peer_id", p.id))
+    
+    // Tracing is available directly — no type assertion needed
+    tracer := p.app.Tracer("p2p.handshake")
+    ctx, span := tracer.Start(ctx, "Handshake")
+    defer span.End()
 }
+```
+
+**Alternative: Use `Named()` when only logging is needed at the boundary**
+
+```go
+// If a component only needs logging (not tracing/metrics), accept ion.Logger:
+p2pLog := app.Named("p2p")  // Returns Logger (concrete type is *Ion)
+```
 ```
 
 ### 5.2 Hot-Loop Tracing (Block Validation)
@@ -194,6 +210,7 @@ func (e *Engine) ProcessProposal(ctx context.Context, block *Block) {
     // We trace this because if it's slow, we miss the slot.
     if err := e.verifySignatures(ctx, block); err != nil {
         span.RecordError(err)
+        span.SetStatus(ion.StatusError, "signature verification failed")
         return
     }
     
@@ -201,6 +218,7 @@ func (e *Engine) ProcessProposal(ctx context.Context, block *Block) {
     // Pass CTX so the DB layer (using ion/otel) links its spans to "ProcessProposal"
     if err := e.stateDB.Commit(ctx, block); err != nil {
         span.RecordError(err)
+        span.SetStatus(ion.StatusError, "state commit failed")
         return
     }
 }
@@ -254,7 +272,7 @@ func (s *Syncer) Sync(ctx context.Context) {
         tracer := s.tracer
         // Create a fresh context for the batch
         spanCtx, span := tracer.Start(context.Background(), "ApplyBatch", 
-            ion.WithLinks(trace.LinkFromContext(ctx)), // Link to main sync job
+            ion.WithLinks(ion.LinkFromContext(ctx)), // Link to main sync job
             ion.WithAttributes(attribute.Int("batch_id", batch.ID)),
         )
         
@@ -283,9 +301,10 @@ func (pool *Mempool) AddTx(ctx context.Context, tx *Tx) error {
         // Use Scoped Logger "ion-node.mempool"
         pool.log.Warn(ctx, "tx rejected", 
             ion.String("hash", tx.Hash), 
-            ion.Error(err),
+            ion.Err(err),
         )
         span.RecordError(err)
+        span.SetStatus(ion.StatusError, "tx validation failed")
         return err
     }
     

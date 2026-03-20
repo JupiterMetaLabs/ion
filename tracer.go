@@ -11,6 +11,22 @@ import (
 // Link is an alias for trace.Link to avoid importing otel/trace.
 type Link = trace.Link
 
+// StatusCode is an alias for codes.Code, used with [Span.SetStatus].
+// Ion exports status constants so callers do not need to import
+// "go.opentelemetry.io/otel/codes" directly.
+type StatusCode = codes.Code
+
+const (
+	// StatusUnset is the default span status. Most spans end with this.
+	StatusUnset StatusCode = codes.Unset
+	// StatusError indicates the operation contained an error.
+	// Use with [Span.RecordError] for full error reporting.
+	StatusError StatusCode = codes.Error
+	// StatusOK explicitly marks the operation as successful.
+	// Only set this when you need to override a default or parent status.
+	StatusOK StatusCode = codes.Ok
+)
+
 // LinkFromContext extracts a link from the current context to connect spans.
 func LinkFromContext(ctx context.Context) Link {
 	return trace.LinkFromContext(ctx)
@@ -27,7 +43,8 @@ type Span interface {
 	// End marks the span as complete.
 	End()
 	// SetStatus sets the span status.
-	SetStatus(code codes.Code, description string)
+	// Use [StatusOK], [StatusError], or [StatusUnset].
+	SetStatus(code StatusCode, description string)
 	// RecordError records an error as an event.
 	RecordError(err error)
 	// SetAttributes sets attributes on the span.
@@ -82,10 +99,14 @@ func WithOTELOptions(opts ...trace.SpanStartOption) SpanOption { return otelOpti
 
 // --- OTEL Tracer Implementation ---
 
+// otelTracer wraps an OpenTelemetry trace.Tracer to satisfy the Ion [Tracer] interface.
+// It translates Ion's [SpanOption] types into native OTel span start options.
 type otelTracer struct {
 	tracer trace.Tracer
 }
 
+// newOTELTracer creates a Tracer backed by the global OTel tracer provider.
+// The name identifies the instrumentation scope (e.g., "http.handler", "db.client").
 func newOTELTracer(name string) Tracer {
 	return &otelTracer{tracer: otel.Tracer(name)}
 }
@@ -116,7 +137,7 @@ type otelSpan struct {
 }
 
 func (s *otelSpan) End()                                   { s.span.End() }
-func (s *otelSpan) SetStatus(code codes.Code, desc string) { s.span.SetStatus(code, desc) }
+func (s *otelSpan) SetStatus(code StatusCode, desc string) { s.span.SetStatus(code, desc) }
 func (s *otelSpan) RecordError(err error)                  { s.span.RecordError(err) }
 func (s *otelSpan) SetAttributes(attrs ...Attr)            { s.span.SetAttributes(attrs...) }
 func (s *otelSpan) AddEvent(name string, attrs ...Attr) {
@@ -125,6 +146,7 @@ func (s *otelSpan) AddEvent(name string, attrs ...Attr) {
 
 // --- No-op implementations ---
 
+// noopTracer is a Tracer that creates no-op spans. Used when tracing is disabled.
 type noopTracer struct{}
 
 func (noopTracer) Start(ctx context.Context, _ string, _ ...SpanOption) (context.Context, Span) {
@@ -134,7 +156,7 @@ func (noopTracer) Start(ctx context.Context, _ string, _ ...SpanOption) (context
 type noopSpan struct{}
 
 func (noopSpan) End()                         {}
-func (noopSpan) SetStatus(codes.Code, string) {}
+func (noopSpan) SetStatus(StatusCode, string) {}
 func (noopSpan) RecordError(error)            {}
 func (noopSpan) SetAttributes(...Attr)        {}
 func (noopSpan) AddEvent(string, ...Attr)     {}

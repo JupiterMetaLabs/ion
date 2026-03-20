@@ -28,17 +28,17 @@ type Span interface {
     // End marks the span as complete. MUST be called.
     End()
     
-    // SetStatus sets the span status (Ok, Error, or Unset).
-    SetStatus(code codes.Code, description string)
+    // SetStatus sets the span status (StatusOK, StatusError, or StatusUnset).
+    SetStatus(code ion.StatusCode, description string)
     
     // RecordError records an error as an event on the span timeline.
     RecordError(err error)
     
     // SetAttributes adds key-value metadata for filtering/searching.
-    SetAttributes(attrs ...attribute.KeyValue)
+    SetAttributes(attrs ...ion.Attr)
     
     // AddEvent adds a timestamped event to the span.
-    AddEvent(name string, attrs ...attribute.KeyValue)
+    AddEvent(name string, attrs ...ion.Attr)
 }
 ```
 
@@ -51,13 +51,10 @@ type Span interface {
 Every span follows this pattern: **Start → Work → End**
 
 ```go
-import (
-    "go.opentelemetry.io/otel/attribute"
-    "go.opentelemetry.io/otel/codes"
-)
+import "go.opentelemetry.io/otel/attribute"
 
 func ProcessOrder(ctx context.Context, orderID string) error {
-    // 1. Get a named tracer
+    // 1. Get a named tracer (use Child() for full observability)
     tracer := app.Tracer("order.processor")
     
     // 2. Start a span (returns enriched context + span)
@@ -73,15 +70,18 @@ func ProcessOrder(ctx context.Context, orderID string) error {
     if err := validateOrder(ctx, orderID); err != nil {
         // 6. Record errors properly
         span.RecordError(err)
-        span.SetStatus(codes.Error, "validation failed")
+        span.SetStatus(ion.StatusError, "validation failed")
         return err
     }
     
     // 7. Mark success (optional, default is Unset/Ok)
-    span.SetStatus(codes.Ok, "order processed")
+    span.SetStatus(ion.StatusOK, "order processed")
     return nil
 }
 ```
+
+> [!NOTE]
+> Ion provides `ion.StatusOK`, `ion.StatusError`, and `ion.StatusUnset` so you never need to import `go.opentelemetry.io/otel/codes`. For span attributes, use `attribute.String()`, `attribute.Int64()`, etc. from the standard OTel attribute package.
 
 ---
 
@@ -107,20 +107,20 @@ Sets the span's final status. This affects error rate metrics and trace visualiz
 
 | Code | When to Use | Visual |
 |------|-------------|--------|
-| `codes.Unset` | Default, operation outcome unknown | Gray |
-| `codes.Ok` | Explicit success | Green |
-| `codes.Error` | Operation failed | **Red** |
+| `ion.StatusUnset` | Default, operation outcome unknown | Gray |
+| `ion.StatusOK` | Explicit success | Green |
+| `ion.StatusError` | Operation failed | **Red** |
 
 ```go
 // On success
-span.SetStatus(codes.Ok, "completed")
+span.SetStatus(ion.StatusOK, "completed")
 
 // On failure
-span.SetStatus(codes.Error, "database timeout")
+span.SetStatus(ion.StatusError, "database timeout")
 ```
 
 > [!IMPORTANT]
-> By default, spans finish as `Unset` (success). You **MUST** call `SetStatus(codes.Error, ...)` on failures, or your error rate dashboard will show 0%.
+> By default, spans finish as `Unset` (success). You **MUST** call `SetStatus(ion.StatusError, ...)` on failures, or your error rate dashboard will show 0%.
 
 ---
 
@@ -133,8 +133,8 @@ Records an error as an event on the span timeline. This captures:
 
 ```go
 if err != nil {
-    span.RecordError(err)  // Adds "exception" event to timeline
-    span.SetStatus(codes.Error, "operation failed")  // Marks span as failed
+    span.RecordError(err)                              // Adds "exception" event to timeline
+    span.SetStatus(ion.StatusError, "operation failed") // Marks span as failed
     return err
 }
 ```
@@ -195,7 +195,7 @@ Understanding when to create a new span versus adding an event is key to clean t
 | :--- | :--- | :--- |
 | **Concept** | **Duration** (Start & End) | **Point in Time** (Snapshot) |
 | **Visual** | A bar with length | A dot on the timeline |
-| **Best For** | DB Queries, API Calls, Major Functions | Retries, Cache Misses, Valdiation Failures |
+| **Best For** | DB Queries, API Calls, Major Functions | Retries, Cache Misses, Validation Failures |
 | **Overhead** | Higher (Context switching, allocs) | Very Low (Log entry) |
 
 **Rule of Thumb:**
@@ -285,11 +285,11 @@ func HandleRequest(ctx context.Context, req *Request) (*Response, error) {
     result, err := process(ctx, req)
     if err != nil {
         span.RecordError(err)
-        span.SetStatus(codes.Error, err.Error())
+        span.SetStatus(ion.StatusError, err.Error())
         return nil, err
     }
     
-    span.SetStatus(codes.Ok, "success")
+    span.SetStatus(ion.StatusOK, "success")
     return result, nil
 }
 ```
@@ -309,7 +309,7 @@ func (r *Repository) GetUser(ctx context.Context, id string) (*User, error) {
     user, err := r.db.QueryRow(ctx, "SELECT * FROM users WHERE id = $1", id)
     if err != nil {
         span.RecordError(err)
-        span.SetStatus(codes.Error, "query failed")
+        span.SetStatus(ion.StatusError, "query failed")
         return nil, err
     }
     
@@ -340,7 +340,7 @@ func (s *Service) ProcessAsync(ctx context.Context, job *Job) {
         // Process...
         if err := s.doWork(ctx, job); err != nil {
             span.RecordError(err)
-            span.SetStatus(codes.Error, "job failed")
+            span.SetStatus(ion.StatusError, "job failed")
         }
     }()
 }
@@ -373,7 +373,7 @@ func ProcessBatch(ctx context.Context, items []*Item) error {
     span.SetAttributes(attribute.Int("batch.errors", errors))
     
     if errors > 0 {
-        span.SetStatus(codes.Error, fmt.Sprintf("%d items failed", errors))
+        span.SetStatus(ion.StatusError, fmt.Sprintf("%d items failed", errors))
         return fmt.Errorf("%d items failed", errors)
     }
     
@@ -396,7 +396,7 @@ if err != nil {
     span.RecordError(err)
     
     // 2. Mark the span as failed (turns red, affects error rate)
-    span.SetStatus(codes.Error, "operation failed")
+    span.SetStatus(ion.StatusError, "operation failed")
     
     // 3. Log for human debugging (correlated via trace_id)
     app.Error(ctx, "operation failed", err)
@@ -408,7 +408,7 @@ if err != nil {
 | Action | What It Does | Where It Shows |
 |--------|--------------|----------------|
 | `RecordError(err)` | Adds exception event with stack trace | Span timeline |
-| `SetStatus(codes.Error, ...)` | Marks span as failed | Red in UI, Error Rate metrics |
+| `SetStatus(ion.StatusError, ...)` | Marks span as failed | Red in UI, Error Rate metrics |
 | `app.Error(ctx, ...)` | Logs with trace correlation | Loki, searching by trace_id |
 
 ---
@@ -441,14 +441,18 @@ Each span shows:
 Enable tracing in your Ion config:
 
 ```go
+cfg := ion.Default().
+    WithService("my-service").
+    WithTracing("localhost:4317")  // OTEL Collector address
+
+// Or with full control:
 cfg := ion.Config{
     ServiceName: "my-service",
-    
     Tracing: ion.TracingConfig{
         Enabled:  true,
-        Endpoint: "localhost:4317",      // OTEL Collector address
-        Protocol: "grpc",                // or "http"
-        Sampler:  "always",              // or "ratio:0.1" for 10%
+        Endpoint: "localhost:4317",
+        Protocol: "grpc",
+        Sampler:  "always",        // or "ratio:0.1" for 10%
     },
 }
 
@@ -460,21 +464,23 @@ app, _, err := ion.New(cfg)
 ## Best Practices Checklist
 
 - [ ] **Always `defer span.End()`** immediately after `tracer.Start()`
-- [ ] **Always call both** `RecordError()` and `SetStatus(codes.Error, ...)` on failures
+- [ ] **Always call both** `RecordError()` and `SetStatus(ion.StatusError, ...)` on failures
 - [ ] **Use low-cardinality attributes** — avoid putting error messages or dynamic IDs as attribute values
 - [ ] **Pass context everywhere** — broken context = broken traces
 - [ ] **Use Links for goroutines** — prevents ghost spans and preserves causality
 - [ ] **Trace boundaries, not everything** — DB calls, HTTP requests, major logic blocks
 - [ ] **Name spans descriptively** — `ProcessOrder` not `DoStuff`
 - [ ] **Call `app.Shutdown(ctx)`** on exit — flushes all buffered traces
+- [ ] **Use `Child()` for components** — `svc := app.Child("http")`, then `svc.Tracer("http.handler")`
 
 ---
 
 ## Quick Reference
 
 ```go
-// Get tracer
-tracer := app.Tracer("component.name")
+// Get tracer (prefer Child() for component-scoped observability)
+http := app.Child("http")
+tracer := http.Tracer("http.handler")
 
 // Start span
 ctx, span := tracer.Start(ctx, "OperationName")
@@ -488,10 +494,10 @@ span.AddEvent("event_name", attribute.Int("count", 5))
 
 // Record error
 span.RecordError(err)
-span.SetStatus(codes.Error, "failed")
+span.SetStatus(ion.StatusError, "failed")
 
 // Mark success
-span.SetStatus(codes.Ok, "success")
+span.SetStatus(ion.StatusOK, "success")
 
 // Link spans (for goroutines)
 link := ion.LinkFromContext(parentCtx)

@@ -8,6 +8,7 @@ Ion is not a collection of wrappers; it is an **instrumentation contract**. When
 1.  **Strict Context Propagation**: Every log and span carries the same `trace_id` and `span_id`.
 2.  **Resource Identity**: Every record is tagged with immutable resource attributes (`service.name`, `service.version`).
 3.  **Attribute Richness**: Business context (high-cardinality data) is stored in structured attributes, not as string-formatted log bodies.
+4.  **Unified Observability**: Each component receives logging, tracing, and metrics through a single `*Ion` instance via `Child()` — no separate wiring required.
 
 A backend that "greps" text or siloed data fails this contract.
 
@@ -84,6 +85,10 @@ service:
       receivers: [otlp/ion]
       processors: [batch, resource]
       exporters: [otlp/backend]
+    metrics:
+      receivers: [otlp/ion]
+      processors: [batch, resource]
+      exporters: [otlp/backend]
 ```
 
 ---
@@ -95,5 +100,6 @@ A deployment is "Ion-Certified" only if it satisfies this developer workflow:
 1.  **The "No-Copies" Rule**: A developer never has to copy a Trace ID from one tab and paste it into another.
 2.  **The "Drill-Down" Rule**: Can you filter for a specific `user_id` across 1 billion logs in less than 5 seconds?
 3.  **The "Consistency" Rule**: Does every log show the `service.version` automatically, preventing "ghost debugging" of old code?
+4.  **The "Child" Rule**: Can a component created via `app.Child("name")` produce correlated logs, traces, and metrics without any additional wiring?
 
 ---

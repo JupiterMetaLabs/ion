@@ -1,41 +1,3 @@
-// Package ion provides enterprise-grade structured logging for JupiterMeta blockchain applications.
-//
-// Ion is designed for distributed systems where trace correlation is critical. All log methods
-// require a context.Context as the first parameter to ensure trace information is never forgotten.
-//
-// Features:
-//   - High-performance Zap core
-//   - Multi-destination output (Console, File, OTEL)
-//   - Blockchain-specific field helpers (TxHash, ShardID, Slot, etc.)
-//   - Automatic trace context propagation from context.Context
-//   - Pretty console output for development
-//   - File rotation via lumberjack
-//   - OpenTelemetry integration for observability
-//
-// Basic usage:
-//
-//	ctx := context.Background()
-//	logger, warnings, _ := ion.New(ion.Default())
-//	defer logger.Sync()
-//
-//	logger.Info(ctx, "server started", ion.Int("port", 8080))
-//
-// With blockchain fields:
-//
-//	import "github.com/JupiterMetaLabs/ion/fields"
-//
-//	logger.Info(ctx, "transaction routed",
-//	    fields.TxHash("abc123"),
-//	    fields.ShardID(5),
-//	    fields.LatencyMs(12.5),
-//	)
-//
-// Context-first design ensures trace_id and span_id are automatically extracted:
-//
-//	func HandleRequest(ctx context.Context) {
-//	    // trace_id and span_id from ctx are added to logs automatically
-//	    logger.Info(ctx, "processing request")
-//	}
 package ion
 
 import (
@@ -70,10 +32,18 @@ type Logger interface {
 
 	// With returns a child logger with additional fields attached.
 	// Fields are included in all subsequent log entries.
+	//
+	// When called on an [Ion] instance, the returned Logger preserves access to
+	// tracing and metrics (the concrete type is *Ion). For direct *Ion access
+	// without a type assertion, use [Ion.Child] instead.
 	With(fields ...Field) Logger
 
 	// Named returns a named sub-logger.
-	// The name appears in logs as the "component" field.
+	// The name appears in logs as the "logger" field.
+	//
+	// When called on an [Ion] instance, the returned Logger preserves access to
+	// tracing and metrics (the concrete type is *Ion). For direct *Ion access
+	// without a type assertion, use [Ion.Child] instead.
 	Named(name string) Logger
 
 	// Sync flushes any buffered log entries.

@@ -10,32 +10,46 @@ import (
 	"go.opentelemetry.io/otel/metric/noop"
 )
 
-// Ion is the unified observability instance providing logging and tracing.
-// It implements the Logger interface directly, so you can use it for logging.
-// It also provides access to Tracer for distributed tracing.
+// Compile-time interface compliance check.
+var _ Logger = (*Ion)(nil)
+
+// Ion is the unified observability instance providing structured logging,
+// distributed tracing, and metrics collection.
+//
+// Ion implements the [Logger] interface, so it can be used anywhere a Logger
+// is expected. It also provides access to [Tracer] and [Meter] for complete
+// observability.
+//
+// Child instances created via [Ion.Named], [Ion.With], or [Ion.Child] preserve
+// full observability capabilities, including access to Tracer and Meter.
+// The [Ion.Child] method is recommended for components that need tracing or
+// metrics, as it returns *Ion directly without requiring a type assertion.
 //
 // Example:
 //
-//	app, err := ion.New(cfg)
+//	app, warnings, err := ion.New(cfg)
 //	if err != nil {
 //	    log.Fatal(err)
 //	}
 //	defer app.Shutdown(context.Background())
 //
-//	// Logging (Ion implements Logger)
+//	// Logging
 //	app.Info(ctx, "message", ion.F("key", "value"))
 //
-//	// Tracing
-//	tracer := app.Tracer("myapp.component")
-//	ctx, span := tracer.Start(ctx, "Operation")
+//	// Scoped child with full observability
+//	http := app.Child("http")
+//	http.Info(ctx, "request received")
+//	tracer := http.Tracer("http.handler")
+//	ctx, span := tracer.Start(ctx, "HandleRequest")
 //	defer span.End()
 //
 //	// Metrics
-//	meter := app.Meter("myapp.component")
-//	counter, _ := meter.Int64Counter("my.counter")
+//	meter := http.Meter("http.metrics")
+//	counter, _ := meter.Int64Counter("http.requests.total")
 //	counter.Add(ctx, 1)
 type Ion struct {
-	logger         Logger
+	*zapLogger // Embedded: promotes Debug, Info, Warn, Error, Critical, Sync, SetLevel, GetLevel.
+	           // Caller depth is unified: all log calls are 1 frame above zap, matching AddCallerSkip(1).
 	serviceName    string
 	version        string
 	tracerProvider *core.TracerProvider
@@ -52,6 +66,7 @@ type Warning struct {
 	Err       error
 }
 
+// Error implements the error interface, formatting the warning as "component: message".
 func (w Warning) Error() string {
 	return fmt.Sprintf("%s: %v", w.Component, w.Err)
 }
@@ -83,7 +98,7 @@ func New(cfg Config) (*Ion, []Warning, error) {
 	}
 
 	// Construct the logger wrapper
-	ion.logger = &zapLogger{
+	ion.zapLogger = &zapLogger{
 		zap:          zapRes.Logger,
 		config:       cfg,
 		atomicLvl:    zapRes.AtomicLevel,
@@ -179,46 +194,76 @@ func New(cfg Config) (*Ion, []Warning, error) {
 	return ion, warnings, nil
 }
 
-// --- Logger interface implementation ---
+// --- Logger interface implementation (Named/With shadow promoted methods) ---
 
-func (i *Ion) Debug(ctx context.Context, msg string, fields ...Field) {
-	i.logger.Debug(ctx, msg, fields...)
-}
-
-func (i *Ion) Info(ctx context.Context, msg string, fields ...Field) {
-	i.logger.Info(ctx, msg, fields...)
-}
-
-func (i *Ion) Warn(ctx context.Context, msg string, fields ...Field) {
-	i.logger.Warn(ctx, msg, fields...)
-}
-
-func (i *Ion) Error(ctx context.Context, msg string, err error, fields ...Field) {
-	i.logger.Error(ctx, msg, err, fields...)
-}
-
-func (i *Ion) Critical(ctx context.Context, msg string, err error, fields ...Field) {
-	i.logger.Critical(ctx, msg, err, fields...)
-}
-
-func (i *Ion) With(fields ...Field) Logger {
-	return i.logger.With(fields...)
-}
-
+// Named returns a child Ion instance with a named sub-logger.
+// The name appears in logs as the "logger" field (e.g., "http", "grpc").
+//
+// Unlike calling Named on a bare Logger, the returned value preserves access
+// to Tracer, Meter, and full Shutdown orchestration because the concrete type
+// behind the Logger interface is *Ion.
+//
+// To get the *Ion directly without a type assertion, use [Ion.Child] instead.
 func (i *Ion) Named(name string) Logger {
-	return i.logger.Named(name)
+	return &Ion{
+		zapLogger:      i.zapLogger.namedInternal(name),
+		serviceName:    i.serviceName,
+		version:        i.version,
+		tracerProvider: i.tracerProvider,
+		tracingEnabled: i.tracingEnabled,
+		meterProvider:  i.meterProvider,
+		metricsEnabled: i.metricsEnabled,
+	}
 }
 
-func (i *Ion) Sync() error {
-	return i.logger.Sync()
+// With returns a child Ion instance with additional fields attached to every log entry.
+//
+// Unlike calling With on a bare Logger, the returned value preserves access
+// to Tracer, Meter, and full Shutdown orchestration because the concrete type
+// behind the Logger interface is *Ion.
+//
+// To get the *Ion directly without a type assertion, use [Ion.Child] instead.
+func (i *Ion) With(fields ...Field) Logger {
+	return &Ion{
+		zapLogger:      i.zapLogger.withInternal(fields...),
+		serviceName:    i.serviceName,
+		version:        i.version,
+		tracerProvider: i.tracerProvider,
+		tracingEnabled: i.tracingEnabled,
+		meterProvider:  i.meterProvider,
+		metricsEnabled: i.metricsEnabled,
+	}
 }
 
-func (i *Ion) SetLevel(level string) {
-	i.logger.SetLevel(level)
-}
-
-func (i *Ion) GetLevel() string {
-	return i.logger.GetLevel()
+// Child returns a named child Ion instance, optionally with additional fields.
+// This is the recommended way to create scoped observability for application components
+// because the return type is *Ion, giving direct access to Tracer, Meter, and Shutdown
+// without a type assertion.
+//
+// Example:
+//
+//	http := app.Child("http", ion.String("version", "v2"))
+//	http.Info(ctx, "request received")
+//	tracer := http.Tracer("http.handler")
+//	meter := http.Meter("http.metrics")
+//
+// Child instances share the parent's tracer and meter providers. Calling Shutdown
+// on a child will shut down shared providers, affecting the parent and all siblings.
+// In most applications, only the root Ion instance should be shut down.
+func (i *Ion) Child(name string, fields ...Field) *Ion {
+	child := i.zapLogger.namedInternal(name)
+	if len(fields) > 0 {
+		child = child.withInternal(fields...)
+	}
+	return &Ion{
+		zapLogger:      child,
+		serviceName:    i.serviceName,
+		version:        i.version,
+		tracerProvider: i.tracerProvider,
+		tracingEnabled: i.tracingEnabled,
+		meterProvider:  i.meterProvider,
+		metricsEnabled: i.metricsEnabled,
+	}
 }
 
 // --- Tracer access ---
@@ -242,7 +287,8 @@ func (i *Ion) Tracer(name string) Tracer {
 
 // --- Metrics access ---
 
-// Meter returns a named meter for creating instruments.
+// Meter returns a named meter for creating metric instruments (counters, histograms, etc.).
+// If metrics are not enabled, returns a no-op meter that silently discards all recordings.
 func (i *Ion) Meter(name string, opts ...metric.MeterOption) metric.Meter {
 	if !i.metricsEnabled || i.meterProvider == nil {
 		return newNoopMeter()
@@ -250,14 +296,24 @@ func (i *Ion) Meter(name string, opts ...metric.MeterOption) metric.Meter {
 	return i.meterProvider.Meter(name, opts...)
 }
 
-// Ensure noopMeter is initialized with a working noop implementation
+// newNoopMeter returns a no-op meter that satisfies the metric.Meter interface
+// without recording any data. Used when metrics are disabled.
 func newNoopMeter() metric.Meter {
 	return noop.NewMeterProvider().Meter("noop")
 }
 
 // --- Lifecycle ---
 
-// Shutdown gracefully shuts down logging, tracing, and metrics.
+// Shutdown gracefully shuts down all observability subsystems in order:
+// tracing provider, metrics provider, then the logging backend (including OTEL log export).
+//
+// The provided context controls the shutdown deadline. Returns the first error
+// encountered, but always attempts to shut down all subsystems.
+//
+// Important: Child instances created via [Ion.Child], [Ion.Named], or [Ion.With]
+// share the parent's tracer and meter providers. Calling Shutdown on a child
+// tears down shared providers, affecting the parent and all siblings.
+// In most applications, only the root Ion instance should be shut down.
 func (i *Ion) Shutdown(ctx context.Context) error {
 	var firstErr error
 
@@ -273,8 +329,8 @@ func (i *Ion) Shutdown(ctx context.Context) error {
 		}
 	}
 
-	if i.logger != nil {
-		if err := i.logger.Shutdown(ctx); err != nil && firstErr == nil {
+	if i.zapLogger != nil {
+		if err := i.zapLogger.Shutdown(ctx); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
