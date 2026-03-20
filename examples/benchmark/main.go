@@ -16,10 +16,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/JupiterMetaLabs/ion"
-	"github.com/JupiterMetaLabs/ion/fields"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace/noop"
+
+	"github.com/JupiterMetaLabs/ion"
+	"github.com/JupiterMetaLabs/ion/fields"
 )
 
 func main() {

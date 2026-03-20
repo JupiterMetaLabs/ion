@@ -5,10 +5,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/JupiterMetaLabs/ion/internal/config"
 	"go.opentelemetry.io/contrib/bridges/otelzap"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/JupiterMetaLabs/ion/internal/config"
 )
 
 // ZapFactoryResult holds the result of constructing the zap logger.

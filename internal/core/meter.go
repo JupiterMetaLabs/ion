@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/JupiterMetaLabs/ion/internal/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -16,6 +15,8 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"google.golang.org/grpc"
 	insecurecreds "google.golang.org/grpc/credentials/insecure"
+
+	"github.com/JupiterMetaLabs/ion/internal/config"
 )
 
 // MeterProvider wraps the OTEL MeterProvider.

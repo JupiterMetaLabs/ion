@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JupiterMetaLabs/ion/internal/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
@@ -24,6 +23,8 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.32.0"
 	"google.golang.org/grpc"
 	insecurecreds "google.golang.org/grpc/credentials/insecure"
+
+	"github.com/JupiterMetaLabs/ion/internal/config"
 )
 
 // LogProvider manages the OpenTelemetry log provider.
