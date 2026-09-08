@@ -25,7 +25,9 @@ You might notice that core files like `zap.go` and `config.go` are in the root d
 
 ## Coding Standards
 
--   **Go Version**: We target Go 1.24+.
+-   **Go Version**: We target Go 1.26+. The `go` directive in `go.mod` is the
+    language floor; `toolchain go1.26.8` pins the build toolchain (raise it when
+    a new patch release lands — patch releases carry stdlib security fixes).
 -   **Formatting**: code must be formatted with `gofmt` (or `goimports`).
 -   **Linting**: We use strict linting rules. Ensure your code passes `golangci-lint`:
     ```bash

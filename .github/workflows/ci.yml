@@ -14,7 +14,7 @@ concurrency:
 
 env:
   # Single source of truth for the linter version.
-  # Using v2.x to natively support Go 1.25/1.26 toolchains.
+  # Using v2.x to natively support the Go 1.26 toolchain.
   GOLANGCI_LINT_VERSION: v2.10.1
 
 permissions:
@@ -64,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go-version: [ "1.25", "1.26" ]
+        go-version: [ "1.26" ]
     
     steps:
       - name: Checkout code
