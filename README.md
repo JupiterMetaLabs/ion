@@ -31,7 +31,7 @@ To maintain focus and stability, Ion explicitly avoids:
 go get github.com/JupiterMetaLabs/ion
 ```
 
-Requires Go 1.24+.
+Requires Go 1.26+.
 
 ---
 
