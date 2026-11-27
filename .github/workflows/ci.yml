@@ -1,5 +1,22 @@
 name: CI
 
+# ── Action pinning convention (applies to every workflow in this repo) ───────
+#
+# Actions are referenced by EXACT version (`@v7.0.1`), never a bare major
+# (`@v7`). A tag is a moving pointer: in CVE-2025-30066 an attacker repointed
+# existing tags of tj-actions/changed-files at a commit that dumped CI secrets.
+#
+# .github/workflows/actions.lock records the commit each ref resolved to and
+# the source repo's owner_id/repo_id, so a repointed tag or a renamed/replaced
+# repository is caught. The `lockfile` job below fails if a workflow and the
+# lockfile disagree.
+#
+# If you add or bump an action: use an exact version, then run
+#   gh extension install github/gh-actions-lock --pin v0.4.1
+#   gh actions-lock
+# and commit the regenerated actions.lock in the same commit.
+# ─────────────────────────────────────────────────────────────────────────────
+
 on:
   push:
     branches: [ "main", "release/**" ]
@@ -14,8 +31,23 @@ concurrency:
 
 env:
   # Single source of truth for the linter version.
-  # Using v2.x to natively support the Go 1.26 toolchain.
-  GOLANGCI_LINT_VERSION: v2.10.1
+  # Same version jmdn pins; keep them in step.
+  GOLANGCI_LINT_VERSION: v2.15.0
+  # sha256 of that release's install.sh, checked before it is executed, so a
+  # repointed tag cannot swap the installer. To bump: change the version, then
+  #   curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/<ver>/install.sh | sha256sum
+  # and update this value. Both move together or the step fails closed.
+  GOLANGCI_LINT_INSTALLER_SHA256: 1022ddb4d87ed252350ed03fc9677e250a4ae95cc6bcd4658c2a20a8a23d390f
+  # Newer than jmdn (v1.9.0); bump jmdn to match when convenient.
+  GOVULNCHECK_VERSION: v1.10.0
+  # The extension that generates and verifies .github/workflows/actions.lock.
+  GH_ACTIONS_LOCK_VERSION: v0.4.1
+  # gitleaks CLI (MIT, no licence key needed), and the sha256 of its
+  # linux_x64 tarball from the release's own checksums file. To bump: change the
+  # version, then take the linux_x64.tar.gz line from
+  #   https://github.com/gitleaks/gitleaks/releases/download/v<ver>/gitleaks_<ver>_checksums.txt
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 
 permissions:
   contents: read
@@ -26,18 +58,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
+        with:
+          # checkout writes GITHUB_TOKEN into .git/config by default, leaving
+          # it readable by every later step. Nothing here needs it.
+          persist-credentials: false
 
+      # setup-go v6+ installs the `toolchain` line from go.mod (go1.26.11),
+      # not just the `go` language floor. Do not drop the toolchain line: it
+      # carries the stdlib security fixes.
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: go.mod
           cache: true
 
       - name: Install golangci-lint ${{ env.GOLANGCI_LINT_VERSION }}
+        env:
+          VERSION: ${{ env.GOLANGCI_LINT_VERSION }}
+          INSTALLER_SHA256: ${{ env.GOLANGCI_LINT_INSTALLER_SHA256 }}
         run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
-            | sh -s -- -b $(go env GOPATH)/bin ${{ env.GOLANGCI_LINT_VERSION }}
+          set -euo pipefail
+          curl -sSfL -o /tmp/golangci-install.sh \
+            "https://raw.githubusercontent.com/golangci/golangci-lint/${VERSION}/install.sh"
+          echo "${INSTALLER_SHA256}  /tmp/golangci-install.sh" | sha256sum -c -
+          sh /tmp/golangci-install.sh -b "$(go env GOPATH)/bin" "${VERSION}"
 
       - name: Verify module metadata is tidy
         run: |
@@ -64,14 +109,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go-version: [ "1.26" ]
-    
+        # 1.26 = the minimum ion supports (the `go` line in go.mod).
+        # 1.27 = the newest release, which jmdn already builds with.
+        go-version: [ "1.26", "1.27" ]
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7.1.0
         with:
           go-version: ${{ matrix.go-version }}
           cache: true
@@ -83,11 +132,91 @@ jobs:
         run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-report-${{ matrix.go-version }}
           path: coverage.txt
           retention-days: 5
+
+  # Fails only for vulnerabilities REACHABLE from ion's code (source mode), so
+  # it is something a PR author can act on. A red run here on an unchanged PR
+  # means a new advisory was published: bump the affected module (or the
+  # `toolchain` line for stdlib advisories) and release a patch version.
+  vulncheck:
+    name: Dependencies (govulncheck)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install govulncheck ${{ env.GOVULNCHECK_VERSION }}
+        run: go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
+
+      - name: govulncheck (reachable vulnerabilities)
+        run: govulncheck ./...
+
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          # Full history, so every commit is scanned, not just the latest.
+          fetch-depth: 0
+
+      # The gitleaks CLI is used directly instead of gitleaks/gitleaks-action:
+      # the action needs a licence key (GITLEAKS_LICENSE) for organization
+      # repos; the CLI does not. The tarball is verified against a pinned
+      # sha256 before it is unpacked, so a replaced release asset fails closed.
+      - name: Install gitleaks ${{ env.GITLEAKS_VERSION }}
+        env:
+          VERSION: ${{ env.GITLEAKS_VERSION }}
+          SHA256: ${{ env.GITLEAKS_SHA256 }}
+        run: |
+          set -euo pipefail
+          tarball="gitleaks_${VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "/tmp/${tarball}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/${tarball}"
+          echo "${SHA256}  /tmp/${tarball}" | sha256sum -c -
+          tar -xzf "/tmp/${tarball}" -C /tmp gitleaks
+          /tmp/gitleaks version
+
+      # Scans the whole git history (ion's is small: well under a second).
+      # --redact keeps any found secret out of the job log.
+      - name: Scan for committed secrets
+        run: /tmp/gitleaks git --redact --no-banner --verbose .
+
+  # actions.lock is the only pin on the actions every workflow runs, so a
+  # workflow edit that is not followed by `gh actions-lock` is caught here.
+  lockfile:
+    name: Action lockfile
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install gh-actions-lock ${{ env.GH_ACTIONS_LOCK_VERSION }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ env.GH_ACTIONS_LOCK_VERSION }}
+        run: gh extension install github/gh-actions-lock --pin "$VERSION"
+
+      - name: Verify actions.lock matches the workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh actions-lock --verify
 
   build:
     name: Build (Cross-Compile)
@@ -98,13 +227,15 @@ jobs:
       matrix:
         goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: go.mod
           cache: true

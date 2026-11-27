@@ -15,7 +15,6 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
-	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -140,7 +139,7 @@ func SetupLogProvider(cfg config.OTELConfig, serviceName, version string) (*LogP
 	)
 
 	// Set global logger provider (optional, but good for libs using global API)
-	global.SetLoggerProvider(provider)
+	otel.SetLoggerProvider(provider)
 
 	return &LogProvider{loggerProvider: provider}, nil
 }

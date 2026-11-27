@@ -121,7 +121,7 @@ type OTELConfig struct {
 	Username string `yaml:"username" json:"username" env:"OTEL_USERNAME"`
 
 	// Password is used for HTTP Basic Authentication if required by the OTLP endpoint.
-	Password string `yaml:"password" json:"password" env:"OTEL_PASSWORD"` //nolint:gosec // Required for configuration binding
+	Password string `yaml:"password" json:"password" env:"OTEL_PASSWORD"`
 
 	// Headers are custom headers to send to the exporter.
 	// This map is the standard mechanism for injecting Bearer tokens, API keys, or custom
@@ -170,7 +170,7 @@ type TracingConfig struct {
 	Username string `yaml:"username" json:"username" env:"TRACING_USERNAME"`
 
 	// Password is used for HTTP Basic Authentication if required by the OTLP endpoint.
-	Password string `yaml:"password" json:"password" env:"TRACING_PASSWORD"` //nolint:gosec // Required for configuration binding
+	Password string `yaml:"password" json:"password" env:"TRACING_PASSWORD"`
 
 	// Headers are custom headers for authentication (supersedes Username/Password if Authorization is set).
 	Headers map[string]string `yaml:"headers" json:"headers"`
@@ -213,7 +213,7 @@ type MetricsConfig struct {
 	Username string `yaml:"username" json:"username" env:"METRICS_USERNAME"`
 
 	// Password is used for HTTP Basic Authentication if required by the OTLP endpoint.
-	Password string `yaml:"password" json:"password" env:"METRICS_PASSWORD"` //nolint:gosec // Required for configuration binding
+	Password string `yaml:"password" json:"password" env:"METRICS_PASSWORD"`
 
 	// Headers are custom headers for authentication (supersedes Username/Password if Authorization is set).
 	Headers map[string]string `yaml:"headers" json:"headers"`
