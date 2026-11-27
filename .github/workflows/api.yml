@@ -1,0 +1,103 @@
+name: API Compatibility
+
+# Blocks a pull request that breaks ion's public API (removes or changes an
+# exported function, type, field, method or constant) unless the break is
+# declared on purpose with the `breaking-change` label.
+#
+# Why: every JupiterMetaLabs service imports ion. A break that slips into a
+# patch release fails their builds on the next `go get -u`.
+#
+# What the label means for the next release:
+#   v0.y.z  -> a break needs a MINOR bump  (v0.5.1 -> v0.6.0)
+#   v1+     -> a break needs a MAJOR bump, and in Go a major bump also changes
+#              the module path (github.com/JupiterMetaLabs/ion/v2). Avoid it.
+#
+# Internal packages (ion/internal/...) are ignored: nobody outside ion can
+# import them, so changing them never breaks a caller.
+#
+# Kept in its own workflow so that adding or removing the label re-runs only
+# this check, not the whole CI.
+
+on:
+  pull_request:
+    branches: [ "main", "release/**" ]
+    types: [ opened, synchronize, reopened, labeled, unlabeled ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # apidiff ships in golang.org/x/exp, which has no tagged releases; pin the
+  # pseudo-version. Bump deliberately, not with @latest.
+  APIDIFF_VERSION: v0.0.0-20261124000051-d6646c509b6d
+
+permissions:
+  contents: read
+
+jobs:
+  apidiff:
+    name: Public API (apidiff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+          # Needs the PR base commit to build the "before" API.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install apidiff
+        run: go install golang.org/x/exp/cmd/apidiff@${{ env.APIDIFF_VERSION }}
+
+      - name: Compare public API with the base branch
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BREAK_ALLOWED: ${{ contains(github.event.pull_request.labels.*.name, 'breaking-change') }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/apidiff"
+          mkdir -p "$work"
+
+          head_mod=$(go list -m)
+          git worktree add --detach "$work/base" "$BASE_SHA"
+          base_mod=$(cd "$work/base" && go list -m)
+
+          if [ "$base_mod" != "$head_mod" ]; then
+            echo "::notice::Module path changed ($base_mod -> $head_mod): this is a major-version release; skipping the API diff."
+            exit 0
+          fi
+
+          # Export data must be written from inside each module's directory,
+          # otherwise apidiff reads the module cache instead of this checkout.
+          # stderr only carries "Ignoring internal package ..." notes.
+          (cd "$work/base" && apidiff -m -w "$work/base.exp" "$base_mod" 2>/dev/null)
+          apidiff -m -w "$work/head.exp" "$head_mod" 2>/dev/null
+          apidiff -m -incompatible "$work/base.exp" "$work/head.exp" 2>/dev/null > "$work/breaks.txt"
+
+          if [ ! -s "$work/breaks.txt" ]; then
+            echo "No incompatible public API changes." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "### Incompatible public API changes"
+            echo '```'
+            cat "$work/breaks.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$work/breaks.txt"
+
+          if [ "$BREAK_ALLOWED" = "true" ]; then
+            echo "::warning::This PR breaks the public API and is labelled breaking-change. The next release must be a minor bump while ion is v0 (major from v1 on)."
+            exit 0
+          fi
+
+          echo "::error::This PR breaks ion's public API (see above). Keep the old API (add new names, deprecate old ones), or add the 'breaking-change' label if the break is intended."
+          exit 1
